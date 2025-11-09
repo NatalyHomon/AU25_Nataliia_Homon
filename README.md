@@ -1,1 +1,0 @@
-# AU25_Nataliia_Homon
