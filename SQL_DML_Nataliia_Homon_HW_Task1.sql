@@ -379,5 +379,5 @@ FROM public.payment pay
 WHERE customer_id = (SELECT customer_id     --find needed customer
 							  FROM public.customer
 							  WHERE first_name = 'Nataliia' AND last_name = 'Homon'
-							  LIMIT 1)
+							  LIMIT 1);
  COMMIT;
