@@ -1,9 +1,8 @@
 --create database and schema
 CREATE DATABASE auction_house;
 
-CREATE SCHEMA IF NOT EXISTS auction; --create our container-schema, add check if not exists to avoid errors
 
-SET search_path TO auction;  --this was  added to automatically work with schema auction(so we can now not mention schema name in our queries)
+CREATE SCHEMA IF NOT EXISTS auction; --create our container-schema, add check if not exists to avoid errors
 
 --create table member
 CREATE TABLE IF NOT EXISTS auction.member(
@@ -74,6 +73,8 @@ CONSTRAINT pk_item PRIMARY KEY (i_id),
 CONSTRAINT chk_item_condition CHECK (i_condition IN ('new', 'used', 'refurbished')), --identify what condition an item has
 CONSTRAINT chk_item_count CHECK (i_count >= 0)
 );
+--add UQ constraint  into table auction.item
+ALTER TABLE auction.item ADD CONSTRAINT uq_item_title_date UNIQUE (i_title, i_prod_date);
 
 --create table item_seller
 CREATE TABLE IF NOT EXISTS auction.item_seller (
@@ -328,7 +329,7 @@ SELECT itm.title,
 	   itm.prod_date,
 	   itm.item_condition
 FROM items_new itm
-ON CONFLICT DO NOTHING 
+ON CONFLICT (i_title, i_prod_date) DO NOTHING 
 RETURNING i_id, i_title, i_count, i_description, i_prod_date, i_condition;
 
 COMMIT;
@@ -621,7 +622,7 @@ RETURNING
     pd_id, pd_order_code, pd_payment_date, pd_amount_paid, pd_method, pd_status, pd_transaction_id;
 
 COMMIT;
-SELECT * FROM auction.orders
+
 --Add a not null 'record_ts' field to each table using ALTER TABLE statements, set the default value to current_date, and check to make sure the value has been set for the existing rows.
 
 ALTER TABLE auction.member
