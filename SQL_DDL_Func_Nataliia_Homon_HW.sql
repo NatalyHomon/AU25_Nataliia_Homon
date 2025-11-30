@@ -24,13 +24,10 @@ film_total_revenue AS (
 )
 
 SELECT flmc.cat_name AS film_category,
-	   sum(ftr.film_revenue) AS revenue_for_quarter,
-	   EXTRACT(YEAR FROM ftr.current_quarter_of_year) AS current_year,
-	   EXTRACT(QUARTER FROM ftr.current_quarter_of_year) as current_quarter
+	   sum(ftr.film_revenue) AS revenue_for_quarter
 FROM film_category_name flmc
 INNER JOIN film_total_revenue ftr ON ftr.film_id = flmc.film_id --inner join should only display categories with at least one sale in the current quarter
-GROUP BY flmc.cat_name, ftr.current_quarter_of_year
-
+GROUP BY flmc.cat_name
 );
 
 --check
@@ -42,9 +39,8 @@ FROM sales_revenue_by_category_qtr;
 
 CREATE OR REPLACE FUNCTION get_sales_revenue_by_category_qtr (IN current_date_of_the_year date DEFAULT NULL) 
 RETURNS TABLE (film_category		 text,
-			   revenue_for_quarter	 numeric,
-			   current_year 		 int,
-			   current_quarter		 int)
+			   revenue_for_quarter	 numeric
+			   )
 LANGUAGE SQL 
 AS 
 $$--connect category name with film table
@@ -66,12 +62,10 @@ film_total_revenue AS (
 )
 
 SELECT flmc.cat_name AS film_category,
-	   sum(ftr.film_revenue) AS revenue_for_quarter,
-	   EXTRACT(YEAR FROM ftr.current_quarter_of_year) AS current_year,
-	   EXTRACT(QUARTER FROM ftr.current_quarter_of_year) as current_quarter
+	   sum(ftr.film_revenue) AS revenue_for_quarter
 FROM film_category_name flmc
 INNER JOIN film_total_revenue ftr ON ftr.film_id = flmc.film_id --inner join should only display categories with at least one sale in the current quarter
-GROUP BY flmc.cat_name, ftr.current_quarter_of_year
+GROUP BY flmc.cat_name
 $$;
 
 --check
@@ -150,6 +144,74 @@ $$;
 SELECT * 
 FROM core.most_popular_films_by_countries(ARRAY ['Brazil','Afghanistan','United States']); --also tried without any param () and with empty array [array[]::text[]  --gives empty table
 --Afghanistan here we have 18 films with the same rental_rate
+
+CREATE OR REPLACE FUNCTION core.most_popular_films_by_countries_by_revenue(IN countries text[] DEFAULT null)
+RETURNS TABLE (country 		text,
+			   film			text,
+			   rating 		mpaa_rating,
+			   "language"	character(20),
+			   "length"     smallint,
+			   release_year integer)
+LANGUAGE plpgsql
+AS
+$$
+BEGIN 
+
+IF countries IS NULL OR coalesce(array_length(countries,1),0) = 0 THEN --returns empty table
+    
+    RETURN;
+END IF;
+--an option with error messg
+ /*IF countries IS NULL OR coalesce(array_length(countries,1),0) = 0 
+    THEN
+        RAISE EXCEPTION
+            'Parameter "countries" must not be NULL or empty. Pass at least one country name.'
+            USING ERRCODE = '22023'; -- invalid_parameter_value
+    END IF;*/
+
+    RETURN QUERY
+--connect customer=country
+WITH customer_country AS (
+							SELECT cust.customer_id,
+								   cntr.country
+							FROM public.customer cust
+							INNER JOIN public.address addr ON cust.address_id = addr.address_id 
+							INNER JOIN public.city city ON city.city_id = addr.city_id
+							INNER JOIN public.country cntr ON cntr.country_id = city.country_id 
+							WHERE cntr.country IN (SELECT unnest(countries))
+),--list of films with their rental_rate, grouped by country and film
+ rating_list AS (			SELECT csc.country,
+								   ivn.film_id,
+								   SUM(pmt.amount) AS rent_amount
+					        FROM public.inventory ivn
+					        INNER JOIN public.rental rnt
+					            ON ivn.inventory_id = rnt.inventory_id
+					        INNER JOIN public.payment pmt
+					            ON pmt.rental_id = rnt.rental_id
+					        INNER JOIN customer_country csc
+					            ON csc.customer_id = rnt.customer_id
+					        GROUP BY csc.country, ivn.film_id
+)
+SELECT ral.country AS country,
+	   flm.title AS film,
+	   flm.rating AS rating,
+	   lan."name" AS "language",
+	   flm."length" AS "length",
+	   flm.release_year ::integer AS release_year
+FROM rating_list ral
+INNER JOIN public.film flm ON flm.film_id = ral.film_id
+INNER JOIN public."language" lan ON lan.language_id = flm.language_id 
+WHERE ral.rent_amount = ( --in case we have several film with the same rate=>to show all them
+    SELECT MAX(rent_amount)
+    FROM rating_list rl
+	WHERE rl.country = ral.country
+);
+END;
+$$;
+
+SELECT * 
+FROM core.most_popular_films_by_countries_by_revenue(ARRAY ['Brazil','Afghanistan','United States']); --also tried without any param () and with empty array [array[]::text[]  --gives empty table
+
 
 /*Task 4. Create procedure language functions
 Create a function that generates a list of movies available in stock based on a partial title match (e.g., movies containing the word 'love' in their title). 
@@ -280,6 +342,6 @@ SELECT core.new_movie();
 --check
 SELECT * 
 FROM film f 
-WHERE title IN ('Love in Space', 'Kyiv Stories', 'Kyiv', 'Lviv') 
+WHERE title IN ('Love in Space', 'Kyiv Stories', 'Kyiv', 'Lviv');
 
-SELECT* FROM "language"
+SELECT* FROM "language";

@@ -22,7 +22,7 @@ last_month_start := current_date - '1 month'::interval;
 2. wrong syntax I having, we group by customer_id, should count(*) or count(payment_id)
 3.I changed current_date with the date which exists in the database dvdrental, as the last payment date was in 2017, so we can't check with current date whether function works
 
-CREATE OR REPLACE FUNCTION public.rewards_report(min_monthly_purchases integer, min_dollar_amount_purchased numeric)
+CREATE OR REPLACE FUNCTION public.rewards_report(min_monthly_purchases integer, min_dollar_amount_purchased numeric, p_ref_date date DEFAULT current_date)
  RETURNS SETOF customer
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -42,9 +42,9 @@ BEGIN
         RAISE EXCEPTION 'Minimum monthly dollar amount purchased parameter must be > $0.00';
     END IF;
 
-    last_month_start := '2017-06-29'::date - '1 month'::interval;
-    last_month_start := to_date((extract(YEAR FROM last_month_start) || '-' || extract(MONTH FROM last_month_start) || '-01'),'YYYY-MM-DD');
-    last_month_end := LAST_DAY(last_month_start);
+    last_month_start := date_trunc('month', (p_ref_date - interval '1 month'))::date;
+
+   last_month_end := (last_month_start + interval '1 month - 1 day')::date;
 
     /*
     Create a temporary storage area for Customer IDs.
@@ -86,6 +86,15 @@ $function$
 
 group_concat and _group_concat functions can be removed. These custom functions emulate MySQL’s GROUP_CONCAT() feature.
 However, PostgreSQL already provides a built-in equivalent:string_agg().Thus both functions are redundant and can be safely removed.
+
+There is one more function that can potentially be removed: last_day(timestamptz).
+Its logic (computing the last day of a month) can be easily expressed using built-in date and interval operations, e.g.:
+
+(date_trunc('month', some_date) + interval '1 month - 1 day')::date
+
+
+In the current dvdrental schema it is mainly used inside rewards_report.
+If we refactor rewards_report to use the expression above directly (as we already did), then last_day becomes dead code and can safely be removed as well.(it was replaced in the task 2)
 
 4.The ‘get_customer_balance’ function describes the business requirements for calculating the client balance. Unfortunately, not all of them are implemented in this function. Try to change function using the requirements from the comments.
 
@@ -170,6 +179,23 @@ PostgreSQL's native string_agg() makes them unnecessary.
 
 6.What does ‘last_updated’ function do? Where is it used?
 This trigger function automatically updates the last_update column whenever a row is modified.
+
+The last_updated() function is a small helper function that PostgreSQL automatically calls whenever a row is updated in certain tables.
+
+Each time a row is updated, last_updated() sets last_update = NOW() automatically.
+
+You don’t need to write this manually in every UPDATE query — PostgreSQL.
+The function is attached to multiple tables through BEFORE UPDATE triggers, for example:film, actor, customer, staff, store, address, category, city, country, inventory
+
+Each table has a trigger like this:
+
+CREATE TRIGGER last_updated
+BEFORE UPDATE ON film
+FOR EACH ROW
+EXECUTE PROCEDURE last_updated();
+
+Without this trigger function, developers would have to manually update the last_update column in every single UPDATE query.
+This would be error-prone and easy to forget.
 
 7.What is tmpSQL variable for in ‘rewards_report’ function? Can this function be recreated without EXECUTE statement and dynamic SQL? Why?
 
