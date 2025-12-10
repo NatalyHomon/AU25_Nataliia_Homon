@@ -1,23 +1,17 @@
 
 --Task 2. Implement role-based authentication model for dvd_rental database
 --1/Create a new user with the username "rentaluser" and the password "rentalpassword". Give the user the ability to connect to the database but no other permissions.
-CREATE USER rentaluser
-	LOGIN 
-	PASSWORD 'rentalpassword';
-	
-/*if you want the DDL to be “self-documenting” these maybe added manually(postgree does it by default automatically):
- * -the reader immediately understands what you wanted,
- * -even if the default in versions will change soon - your code is unambiguous.
- * */
+DO
+$$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'rentaluser'
+    ) THEN
+        CREATE ROLE rentaluser LOGIN PASSWORD 'rentalpassword';
+    END IF;
+END
+$$;
 
-/*CREATE ROLE rentaluser
-  LOGIN
-  NOSUPERUSER
-  NOCREATEDB
-  NOCREATEROLE
-  NOREPLICATION
-  PASSWORD 'rentalpassword';
-*/
 
 --check
 SELECT *
@@ -44,7 +38,17 @@ SELECT session_user, current_user;--can check our current state;
 
 RESET ROLE; --go back to superuser functional;
 
-CREATE ROLE rental; ---- NOLOGIN by default
+DO
+$$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'rental'
+    ) THEN
+        CREATE ROLE rental;
+    END IF;
+END
+$$;
+ ---- NOLOGIN by default
 
 SELECT *
 FROM pg_roles
@@ -131,9 +135,19 @@ HAVING COUNT(DISTINCT ren.rental_id)  > 0
 LIMIT 1;
 
 --first_name = 'MARY' second_name = 'SMITH', customer_id =1
-CREATE ROLE client_mary_smith
-  LOGIN
-  PASSWORD 'mary_secret_password';
+DO
+$$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_roles WHERE rolname = 'client_mary_smith'
+    ) THEN
+        CREATE ROLE client_mary_smith
+            LOGIN
+            PASSWORD 'mary_secret_password';
+    END IF;
+END
+$$;
+
 
 --check
 SELECT *
