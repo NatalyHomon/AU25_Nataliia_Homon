@@ -986,16 +986,13 @@ You can define the input arguments and output format.
 Make sure all transaction attributes can be set with the function (via their natural keys). 
 The function does not need to return a value but should confirm the successful insertion of the new transaction.
 */
-SELECT * FROM museum.payment
-INSERT INTO museum.payment (pay_visit_id, pay_amount, pay_date, pay_method, pay_status, pay_transaction_ref)
-Values(6, 100, current_date, 'online', 'paid', 'TX-7')
-;
+
 --first will create new visit without payment, as in this database logic 1 visit has 1 payment
 BEGIN TRANSACTION;
 
 WITH new_vst AS (
     SELECT * FROM (VALUES
-       				  ('olga.ravlik@example.com',   'Textile Heritage',    CURRENT_TIMESTAMP - INTERVAL '18 days', 'adult', 170.00, 'offline')
+       				  ('olga.ravlik@example.com',   'Textile Heritage',    CURRENT_TIMESTAMP, 'adult', 170.00, 'offline')
        				) v(p_email, ex_title, v_visit_datetime, v_ticket_type, v_price, v_channel)
 )
 INSERT INTO museum.visit(v_person_id, v_exhibition_id, v_visit_datetime, v_ticket_type, v_price, v_channel)
@@ -1020,6 +1017,7 @@ WHERE NOT EXISTS (
 RETURNING v_id, v_person_id, v_exhibition_id, v_visit_datetime, v_ticket_type, v_price, v_channel;
 
 COMMIT;
+SELECT * FROM museum.visit;
 
 --creat function
 CREATE OR REPLACE FUNCTION museum.add_payment_transaction(
@@ -1152,9 +1150,9 @@ BEGIN
 END;
 $$;
 
-SELECT museum.add_payment_transaction('olga.ravlik@example.com', 'Textile Heritage', TIMESTAMP '2025-11-17 14:32:31.926', 170.00, 'card', 'paid',  'TX-9', TIMESTAMP '2025-11-17 14:32:31.926'); 
+SELECT museum.add_payment_transaction('olga.ravlik@example.com', 'Textile Heritage', CURRENT_TIMESTAMP::timestamp, 170.00, 'card', 'paid',  'TX-9', TIMESTAMP '2025-11-17 14:32:31.926'); 
 
-SELECT* FROM museum.payment
+SELECT* FROM museum.payment;
 
 /*Create a view that presents analytics for the most recently added quarter in your database. Ensure that the result excludes irrelevant fields such as surrogate keys and duplicate entries.
 */
@@ -1202,51 +1200,3 @@ GROUP BY piq.quarter_start, exb.ex_title;
 
 SELECT * FROM museum.v_quarterly_exhibition_analytics;
 
-/*Create a read-only role for the manager. This role should have permission to perform SELECT queries on the database tables
- * , and also be able to log in. Please ensure that you adhere to best practices for database security when defining this role
-*/
-
---DO BEGIN...END is needed IF you want safe, reusable, conditional, or automated role creation without the risk of errors.
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_roles WHERE rolname = 'manager'
-    ) THEN
-        CREATE ROLE manager
-            LOGIN
-            PASSWORD 'ManagerPassword1!';
-    END IF;
-END
-$$;
-
-
---check
-SELECT *
-FROM pg_roles
-WHERE rolname = 'manager';
-
-GRANT CONNECT ON DATABASE museum_db TO manager;
-
-GRANT USAGE ON SCHEMA museum TO manager;
-GRANT SELECT ON ALL TABLES IN SCHEMA museum TO manager;
---Option for new tables
---ALTER DEFAULT PRIVILEGES IN SCHEMA museum GRANT SELECT ON TABLES TO manager;
-
---check
-SET ROLE manager;
-
-SELECT* FROM museum.person;
-
-DELETE FROM museum.person 
-WHERE p_id =1;
-
-INSERT INTO museum.category(cat_name)
-VALUES ('testcategory')
-ON CONFLICT (cat_name) DO NOTHING;
-
-UPDATE museum.category
-SET cat_name = 'testcategory'
-WHERE cat_id = 1
-AND 'testcategory' NOT IN (SELECT cat_name FROM museum.category);
-
-RESET ROLE;
