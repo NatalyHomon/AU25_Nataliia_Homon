@@ -30,6 +30,7 @@ fin AS (SELECT stp.country_region,
 	   stp.calendar_year,
 	   stp.channel_desc,
 	   COALESCE (stp.total, 0) || '$' AS amount_sold,
+	   by_channels || '%' AS "% BY CHANNELS",
 	   COALESCE (LAG (stp.by_channels) OVER (PARTITION BY stp.country_region, stp.channel_desc ORDER BY stp.calendar_year), 0)|| '%' AS "% PREVIOUS PERIOD",
 	   COALESCE (stp.by_channels - LAG (stp.by_channels) OVER (PARTITION BY stp.country_region, stp.channel_desc ORDER BY stp.calendar_year),0) ||'%' AS "% DIFF" 
 FROM start_point stp
@@ -37,7 +38,42 @@ ORDER BY stp.country_region, stp.calendar_year, stp.channel_desc )
 
 SELECT *
 FROM fin 
-WHERE fin.calendar_year BETWEEN 1999 AND 2001;
+WHERE fin.calendar_year BETWEEN 1999 AND 2001
+ORDER BY fin.country_region, fin.calendar_year, fin.channel_desc;
+
+--option without LAG with window frames
+WITH data_source AS(	SELECT cnt.country_region,
+							   tim.calendar_year,
+							   chn.channel_desc,
+							   sum(sls.amount_sold) AS total
+						FROM sh.sales sls 
+						INNER JOIN sh.channels chn  ON sls.channel_id = chn.channel_id 
+						INNER JOIN sh.times tim  ON sls.time_id = tim.time_id 
+						INNER JOIN sh.customers cust ON cust.cust_id = sls.cust_id
+						INNER JOIN sh.countries cnt ON cnt.country_id  = cust.country_id
+						WHERE tim.calendar_year BETWEEN 1998 AND 2001
+						AND cnt.country_region in('Americas', 'Asia', 'Europe')
+						GROUP BY cnt.country_region, tim.calendar_year, chn.channel_desc),
+						
+agr_data AS (  SELECT dsc.country_region,
+			   dsc.calendar_year,
+			   dsc.channel_desc,
+			   dsc.total,
+			   ROUND(dsc.total/sum(dsc.total)OVER (PARTITION BY dsc.country_region, dsc.calendar_year)*100,2) AS by_channels,
+			   ROUND( sum(dsc.total)OVER (PARTITION BY dsc.country_region, dsc.channel_desc ORDER BY dsc.calendar_year GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE GROUP )/
+			          sum(dsc.total)OVER (PARTITION BY dsc.country_region ORDER BY dsc.calendar_year GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE GROUP)*100,2) AS prev_period
+			   FROM data_source dsc)
+
+SELECT agr.country_region,
+	   agr.calendar_year,
+	   agr.channel_desc,
+	   COALESCE (agr.total, 0) || '$' AS amount_sold,
+	   by_channels || '%' AS "% BY CHANNELS",
+	   agr.prev_period || '%' AS "% PREVIOUS PERIOD",
+	   agr.by_channels - agr.prev_period ||'%' AS "% DIFF" 
+FROM agr_data agr 
+WHERE agr.calendar_year BETWEEN 1999 AND 2001
+ORDER BY agr.country_region, agr.calendar_year, agr.channel_desc;
 
 /*Task 2
 You need to create a query that meets the following requirements:
