@@ -93,45 +93,6 @@ class InvertedIndex:
 
         return cls(words_ids)
 
-# def resolve_path_to_read(filepath: str) -> str:
-#     """Знайти файл для читання, незалежно звідки запускають."""
-#     p = Path(filepath)
-#
-#     # 1) як передали — так і пробуємо
-#     if p.exists():
-#         return str(p)
-#
-#     # 2) якщо передали абсолютний шлях, але там файлу нема,
-#     #    пробуємо знайти по імені в CWD і в папці з кодом
-#     name = p.name
-#     candidates = [
-#         Path.cwd() / name,      # Python-Course/name
-#         BASE_DIR / name,        # Final_Task/name
-#     ]
-#
-#     for c in candidates:
-#         if c.exists():
-#             return str(c)
-#
-#     # 3) якщо передали відносний шлях — пробуємо відносно CWD і BASE_DIR
-#     candidates = [
-#         Path.cwd() / filepath,
-#         BASE_DIR / filepath,
-#     ]
-#     for c in candidates:
-#         if c.exists():
-#             return str(c)
-#
-#     # якщо не знайшли — повертаємо як є (open дасть FileNotFoundError)
-#     return str(p)
-#
-#
-# def resolve_path_to_write(filepath: str) -> str:
-#     """Шлях для запису: якщо відносний — пишемо поруч з кодом, якщо абсолютний — як є."""
-#     p = Path(filepath)
-#     if p.is_absolute():
-#         return str(p)
-#     return str(BASE_DIR / p)
 
 def load_documents(filepath: str) -> Dict[int, str]:
     """
