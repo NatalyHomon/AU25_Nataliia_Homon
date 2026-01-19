@@ -1,12 +1,14 @@
 import os
 import sys
 from unittest.mock import patch
+from pathlib import Path
 
 from final_task import main, process_build, process_query
 
-PATH_TO_JSON_INDEX = "inverted.index"
-PATH_TO_SIMPLE_QUERIES = "simple_queries.txt"
-PATH_TO_DATASET = "wikipedia_sample"
+BASE_DIR = Path(__file__).resolve().parent
+PATH_TO_JSON_INDEX =BASE_DIR / "inverted.index"
+PATH_TO_SIMPLE_QUERIES =BASE_DIR / "simple_queries.txt"
+PATH_TO_DATASET =BASE_DIR / "wikipedia_sample"
 
 
 def test_process_build_inverted_indexes():

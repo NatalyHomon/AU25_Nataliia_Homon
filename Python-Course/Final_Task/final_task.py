@@ -6,9 +6,12 @@ import sys
 from argparse import ArgumentParser, ArgumentTypeError, FileType
 from io import TextIOWrapper
 from typing import Dict, List
+import re
+import json
+
+
 
 DEFAULT_PATH_TO_STORE_INVERTED_INDEX = "inverted.index"
-
 
 class EncodedFileType(FileType):
     """File encoder"""
@@ -44,11 +47,30 @@ class InvertedIndex:
     """
 
     def __init__(self, words_ids: Dict[str, List[int]]):
-        pass
+        self.words_ids = words_ids
 
     def query(self, words: List[str]) -> List[int]:
         """Return the list of relevant documents for the given query"""
-        pass
+
+        if not words:
+            return []
+
+        norm_words = [word.lower() for word in words if word.strip() and word]
+
+        first_word = norm_words[0]
+        if first_word not in self.words_ids:
+            return []
+
+        result = set(self.words_ids[first_word])
+
+        for word in norm_words[1:]:
+            if word not in self.words_ids:
+                return []
+            result &= set(self.words_ids[word])
+
+            if not result:
+                return []
+        return sorted(result)
 
     def dump(self, filepath: str) -> None:
         """
@@ -56,7 +78,8 @@ class InvertedIndex:
         :param filepath: path to file with documents
         :return: None
         """
-        pass
+        with open(filepath, "w", encoding = "utf-8") as file:
+            json.dump(self.words_ids, file, ensure_ascii=False)
 
     @classmethod
     def load(cls, filepath: str):
@@ -65,8 +88,50 @@ class InvertedIndex:
         :param filepath: path to file with documents
         :return: InvertedIndex
         """
-        pass
+        with open(filepath, "r", encoding = "utf-8") as file:
+            words_ids = json.load(file)
 
+        return cls(words_ids)
+
+# def resolve_path_to_read(filepath: str) -> str:
+#     """Знайти файл для читання, незалежно звідки запускають."""
+#     p = Path(filepath)
+#
+#     # 1) як передали — так і пробуємо
+#     if p.exists():
+#         return str(p)
+#
+#     # 2) якщо передали абсолютний шлях, але там файлу нема,
+#     #    пробуємо знайти по імені в CWD і в папці з кодом
+#     name = p.name
+#     candidates = [
+#         Path.cwd() / name,      # Python-Course/name
+#         BASE_DIR / name,        # Final_Task/name
+#     ]
+#
+#     for c in candidates:
+#         if c.exists():
+#             return str(c)
+#
+#     # 3) якщо передали відносний шлях — пробуємо відносно CWD і BASE_DIR
+#     candidates = [
+#         Path.cwd() / filepath,
+#         BASE_DIR / filepath,
+#     ]
+#     for c in candidates:
+#         if c.exists():
+#             return str(c)
+#
+#     # якщо не знайшли — повертаємо як є (open дасть FileNotFoundError)
+#     return str(p)
+#
+#
+# def resolve_path_to_write(filepath: str) -> str:
+#     """Шлях для запису: якщо відносний — пишемо поруч з кодом, якщо абсолютний — як є."""
+#     p = Path(filepath)
+#     if p.is_absolute():
+#         return str(p)
+#     return str(BASE_DIR / p)
 
 def load_documents(filepath: str) -> Dict[int, str]:
     """
@@ -74,8 +139,16 @@ def load_documents(filepath: str) -> Dict[int, str]:
     :param filepath: path to file with documents
     :return: Dict[int, str]
     """
-    pass
 
+    documents: Dict[int, str] = {}
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            doc_id_str, content = line.lower().split("\t", 1)
+            documents[int(doc_id_str)] = content
+    return documents
 
 def build_inverted_index(documents: Dict[int, str]) -> InvertedIndex:
     """
@@ -83,8 +156,21 @@ def build_inverted_index(documents: Dict[int, str]) -> InvertedIndex:
     :param documents: dict with documents
     :return: InvertedIndex class
     """
-    pass
+    result = {}
 
+    for key, value in documents.items():
+        words = re.split(r"\W+", value)
+
+        for word in words:
+            if not word:
+                continue
+            if word not in result:
+                result[word] = []
+            if key not in result.get(word):
+                result[word].append(key)
+    for w in result:
+        result[w].sort()
+    return InvertedIndex(result)
 
 def callback_build(arguments) -> None:
     """process build runner"""
@@ -123,6 +209,7 @@ def process_query(queries, index) -> None:
 
         doc_indexes = ",".join(str(value) for value in inverted_index.query(query))
         print(doc_indexes)
+
 
 
 def setup_subparsers(parser) -> None:
@@ -172,7 +259,7 @@ def setup_subparsers(parser) -> None:
         "--query_from_file",
         dest="query",
         type=EncodedFileType("r", encoding="utf-8"),
-        # default=TextIOWrapper(sys.stdin.buffer, encoding='utf-8'),
+        default=TextIOWrapper(sys.stdin.buffer, encoding='utf-8'),
         help="query file to get queries for inverted index",
     )
     query_parser.set_defaults(callback=callback_query)
@@ -188,8 +275,16 @@ def main():
     )
     setup_subparsers(parser)
     arguments = parser.parse_args()
+    if not hasattr(arguments, "callback"):
+        parser.print_help()
+        return
     arguments.callback(arguments)
 
 
 if __name__ == "__main__":
+
     main()
+
+
+
+
