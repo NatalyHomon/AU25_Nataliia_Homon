@@ -1,15 +1,21 @@
 -- 0) safe to re-run
+BEGIN;
+
 CREATE EXTENSION IF NOT EXISTS file_fdw;
 
-CREATE SCHEMA IF NOT EXISTS sa_sales;
 
 CREATE SERVER IF NOT EXISTS sa_sales_file_srv
   FOREIGN DATA WRAPPER file_fdw;
 
-DROP FOREIGN TABLE IF EXISTS sa_sales.ext_sales_online;
+COMMIT;
 
+BEGIN;
+
+CREATE SCHEMA IF NOT EXISTS sa_sales_online;
+
+DROP FOREIGN TABLE IF EXISTS sa_sales_online.ext_sales_online;
 --1) External (foreign) table (ext_...)
-CREATE FOREIGN TABLE sa_sales.ext_sales_online (
+CREATE FOREIGN TABLE sa_sales_online.ext_sales_online (
     web_order_id              text,
     txn_ts                    timestamp,
     order_status              text,
@@ -63,11 +69,14 @@ OPTIONS (
     null '',
     encoding 'UTF8'
 );
+COMMIT;
 
 --2) Source table (src_...)
+BEGIN;
+
 DROP TABLE IF EXISTS sa_sales.src_sales_online;
 
-CREATE TABLE sa_sales.src_sales_online (
+CREATE TABLE sa_sales_online.src_sales_online (
     web_order_id              text NOT NULL,
     txn_ts                    timestamp,
     order_status              text,
@@ -118,8 +127,11 @@ CREATE TABLE sa_sales.src_sales_online (
     
    CONSTRAINT pk_src_sales_online PRIMARY KEY (web_order_id, product_sku)
 );
+COMMIT;
 
-INSERT INTO sa_sales.src_sales_online (
+BEGIN;
+
+INSERT INTO sa_sales_online.src_sales_online (
     web_order_id,
     txn_ts,
     order_status,
@@ -210,7 +222,7 @@ SELECT
     gross_profit_amt,
     customer_rating,
     'src_sales_online.csv'::text
-FROM sa_sales.ext_sales_online
+FROM sa_sales_online.ext_sales_online
 ON CONFLICT (web_order_id, product_sku)
 DO UPDATE
 SET
@@ -258,29 +270,31 @@ SET
     load_dts           = now(),
     source_file        = EXCLUDED.source_file;
 
-
+COMMIT;
 -- 4) validation queries
 
 
 -- preview external data
-SELECT * FROM sa_sales.ext_sales_online LIMIT 5;
+SELECT * FROM sa_sales_online.ext_sales_online LIMIT 5;
 
 -- preview loaded source data
-SELECT * FROM sa_sales.src_sales_online ORDER BY load_dts DESC LIMIT 5;
+SELECT * FROM sa_sales_online.src_sales_online ORDER BY load_dts DESC LIMIT 5;
 
 -- duplicates check (should return 0 rows)
 SELECT web_order_id, product_sku, COUNT(*)
-FROM sa_sales.src_sales_online
+FROM sa_sales_online.src_sales_online
 GROUP BY web_order_id, product_sku
 HAVING COUNT(*) > 1;
 
 
+BEGIN;
 
+CREATE SCHEMA IF NOT EXISTS sa_sales_pos;
 -- 1) EXTERNAL TABLE: ext_sales_pos
 
-DROP FOREIGN TABLE IF EXISTS sa_sales.ext_sales_pos;
+DROP FOREIGN TABLE IF EXISTS sa_sales_pos.ext_sales_pos;
 
-CREATE FOREIGN TABLE sa_sales.ext_sales_pos (
+CREATE FOREIGN TABLE sa_sales_pos.ext_sales_pos (
     ckout                  text,
     txn_ts                 timestamp,
     customer_src_id        text,
@@ -337,13 +351,13 @@ OPTIONS (
     encoding 'UTF8'
 );
 
-
+COMMIT;
 -- 2) SOURCE TABLE: src_sales_pos (physical)
 --    PK -> no duplicates + enables UPSERT
+BEGIN;
+DROP TABLE IF EXISTS sa_sales_pos.src_sales_pos;
 
-DROP TABLE IF EXISTS sa_sales.src_sales_pos;
-
-CREATE TABLE sa_sales.src_sales_pos (
+CREATE TABLE sa_sales_pos.src_sales_pos (
     ckout                  text NOT NULL,
     txn_ts                 timestamp,
     customer_src_id        text,
@@ -397,12 +411,13 @@ CREATE TABLE sa_sales.src_sales_pos (
         PRIMARY KEY (ckout, product_sku)
 );
 
-
+COMMIT;
 
 
 -- 3) REUSABLE LOAD 
+BEGIN;
 
-INSERT INTO sa_sales.src_sales_pos (
+INSERT INTO sa_sales_pos.src_sales_pos (
     ckout,
     txn_ts,
     customer_src_id,
@@ -497,7 +512,7 @@ SELECT
     gross_profit_amt,
     customer_rating,
     'src_sales_pos.csv'::text
-FROM sa_sales.ext_sales_pos
+FROM sa_sales_pos.ext_sales_pos
 ON CONFLICT (ckout, product_sku)
 DO UPDATE
 SET
@@ -547,12 +562,12 @@ SET
     load_dts              = now(),
     source_file           = EXCLUDED.source_file;
 
-
+COMMIT;
 -- Quick checks 
-SELECT * FROM sa_sales.ext_sales_pos LIMIT 5;
-SELECT * FROM sa_sales.src_sales_pos ORDER BY load_dts DESC LIMIT 5;
+SELECT * FROM sa_sales_pos.ext_sales_pos LIMIT 5;
+SELECT * FROM sa_sales_pos.src_sales_pos ORDER BY load_dts DESC LIMIT 5;
 
 SELECT ckout, product_sku, COUNT(*)
-FROM sa_sales.src_sales_pos
+FROM sa_sales_pos.src_sales_pos
 GROUP BY ckout, product_sku
 HAVING COUNT(*) > 1;
