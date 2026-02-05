@@ -1634,5 +1634,987 @@ WHERE NOT EXISTS (
 
 COMMIT;
 
+BEGIN;
+
+WITH src_raw AS (
+    SELECT
+        COALESCE(spo.cashier_id, 'n. a.')         AS employee_src_id,
+        COALESCE(spo.cashier_first_name, 'n. a.') AS first_name,
+        COALESCE(spo.cashier_last_name, 'n. a.')  AS last_name,
+        COALESCE(spo.cashier_dept, 'n. a.')       AS department,
+        COALESCE(spo.cashier_position, 'n. a.')   AS position,
+        COALESCE(spo.cashier_hire_dt, DATE '1900-01-01') AS hire_dt,
+        COALESCE(spo.txn_ts, TIMESTAMP '1900-01-01')     AS txn_ts,
+        'sa_sales_pos'                            AS source_system,
+        'src_sales_pos'                           AS source_entity,
+        COALESCE(spo.cashier_id, 'n. a.')         AS source_id
+    FROM sa_sales_pos.src_sales_pos spo
+    WHERE spo.cashier_id IS NOT NULL
+),
+src AS (
+    SELECT DISTINCT ON (srr.employee_src_id, srr.source_system, srr.source_entity)
+        srr.employee_src_id,
+        srr.first_name,
+        srr.last_name,
+        srr.department,
+        srr.position,
+        srr.hire_dt,
+        srr.source_system,
+        srr.source_entity,
+        srr.source_id
+    FROM src_raw srr
+    ORDER BY
+        srr.employee_src_id,
+        srr.source_system,
+        srr.source_entity,
+        srr.txn_ts DESC
+)
+INSERT INTO bl_3nf.ce_employees (
+    employee_src_id,
+    first_name,
+    last_name,
+    department,
+    position,
+    hire_dt,
+    source_system,
+    source_entity,
+    source_id,
+    ta_insert_dt,
+    ta_update_dt
+)
+SELECT
+    src.employee_src_id,
+    src.first_name,
+    src.last_name,
+    src.department,
+    src.position,
+    src.hire_dt,
+    src.source_system,
+    src.source_entity,
+    src.source_id,
+    now(),
+    now()
+FROM src
+ON CONFLICT (employee_src_id, source_system, source_entity)
+DO UPDATE
+SET
+    first_name   = EXCLUDED.first_name,
+    last_name    = EXCLUDED.last_name,
+    department   = EXCLUDED.department,
+    position     = EXCLUDED.position,
+    hire_dt      = EXCLUDED.hire_dt,
+    source_id    = EXCLUDED.source_id,
+    ta_update_dt = now();
+
+COMMIT;
+
+SELECT * FROM bl_3nf.ce_employees;
+
+--ce_device_types scd0
+BEGIN;
+
+INSERT INTO bl_3nf.ce_device_types
+SELECT
+    -1, 'n. a.', 'manual', 'manual', 'n. a.',
+    DATE '1900-01-01', DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM bl_3nf.ce_device_types WHERE device_type_id = -1
+);
+
+WITH src AS (
+    SELECT DISTINCT
+        COALESCE(son.device_type, 'n. a.') AS device_type_name,
+        'sa_sales_online'                  AS source_system,
+        'src_sales_online'                 AS source_entity,
+        COALESCE(son.device_type, 'n. a.') AS source_id
+    FROM sa_sales_online.src_sales_online son
+    WHERE son.device_type IS NOT NULL
+),
+to_insert AS (
+    SELECT src.*
+    FROM src
+    LEFT JOIN bl_3nf.ce_device_types dvc
+      ON dvc.device_type_name = src.device_type_name
+     AND dvc.source_system    = src.source_system
+     AND dvc.source_entity    = src.source_entity
+    WHERE dvc.device_type_id IS NULL
+)
+INSERT INTO bl_3nf.ce_device_types (
+    device_type_name, source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
+)
+SELECT device_type_name, source_system, source_entity, source_id, now(), now()
+FROM to_insert;
+
+COMMIT;
+
+SELECT * FROM bl_3nf.ce_device_types;
+
+--ce_order_statuses
+INSERT INTO bl_3nf.ce_order_statuses
+SELECT
+    -1, 'n. a.', 'manual', 'manual', 'n. a.',
+    DATE '1900-01-01', DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM bl_3nf.ce_order_statuses WHERE order_status_id = -1
+);
+
+WITH src AS (
+    SELECT DISTINCT
+        COALESCE(son.order_status, 'n. a.') AS order_status_name,
+        'sa_sales_online'                   AS source_system,
+        'src_sales_online'                  AS source_entity,
+        COALESCE(son.order_status, 'n. a.') AS source_id
+    FROM sa_sales_online.src_sales_online son
+    WHERE son.order_status IS NOT NULL
+),
+to_insert AS (
+    SELECT src.*
+    FROM src
+    LEFT JOIN bl_3nf.ce_order_statuses ord
+      ON ord.order_status_name = src.order_status_name
+     AND ord.source_system     = src.source_system
+     AND ord.source_entity     = src.source_entity
+    WHERE ord.order_status_id IS NULL
+)
+INSERT INTO bl_3nf.ce_order_statuses (
+    order_status_name, source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
+)
+SELECT order_status_name, source_system, source_entity, source_id, now(), now()
+FROM to_insert;
+
+COMMIT;
+
+SELECT * FROM bl_3nf.ce_order_statuses;
+
+--ce_sales_channels scd0
+BEGIN;
+
+INSERT INTO bl_3nf.ce_sales_channels
+SELECT
+    -1, 'n. a.', 'manual', 'manual', 'n. a.',
+    DATE '1900-01-01', DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM bl_3nf.ce_sales_channels WHERE sales_channel_id = -1
+);
+
+WITH src AS (
+    SELECT DISTINCT
+        'online'              AS sales_channel_name,
+        'sa_sales_online'     AS source_system,
+        'src_sales_online'    AS source_entity,
+        'online'              AS source_id
+    UNION ALL
+    SELECT DISTINCT
+        'pos', 'sa_sales_pos', 'src_sales_pos', 'pos'
+),
+to_insert AS (
+    SELECT src.*
+    FROM src
+    LEFT JOIN bl_3nf.ce_sales_channels sch
+      ON sch.sales_channel_name = src.sales_channel_name
+     AND sch.source_system      = src.source_system
+     AND sch.source_entity      = src.source_entity
+    WHERE sch.sales_channel_id IS NULL
+)
+INSERT INTO bl_3nf.ce_sales_channels (
+    sales_channel_name, source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
+)
+SELECT sales_channel_name, source_system, source_entity, source_id, now(), now()
+FROM to_insert;
+
+COMMIT;
+
+SELECT * FROM bl_3nf.ce_sales_channels;
+
+--3tables from online channel, type scd0
+BEGIN;
+
+/* CE_CARD_TYPES */
+INSERT INTO bl_3nf.ce_card_types
+SELECT
+    -1, 'n. a.', 'manual', 'manual', 'n. a.',
+    DATE '1900-01-01', DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM bl_3nf.ce_card_types WHERE card_type_id = -1
+);
+
+/* CE_PAYMENT_METHODS */
+INSERT INTO bl_3nf.ce_payment_methods
+SELECT
+    -1, 'n. a.', 'manual', 'manual', 'n. a.',
+    DATE '1900-01-01', DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM bl_3nf.ce_payment_methods WHERE payment_method_id = -1
+);
+
+/* CE_RECEIPT_TYPES */
+INSERT INTO bl_3nf.ce_receipt_types
+SELECT
+    -1, 'n. a.', 'manual', 'manual', 'n. a.',
+    DATE '1900-01-01', DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1 FROM bl_3nf.ce_receipt_types WHERE receipt_type_id = -1
+);
+
+COMMIT;
+
+BEGIN;
+
+WITH src AS (
+    SELECT DISTINCT
+        COALESCE(spo.card_type, 'n. a.') AS card_type_name,
+        'sa_sales_pos'                   AS source_system,
+        'src_sales_pos'                  AS source_entity,
+        COALESCE(spo.card_type, 'n. a.') AS source_id
+    FROM sa_sales_pos.src_sales_pos spo
+    WHERE spo.card_type IS NOT NULL
+),
+to_insert AS (
+    SELECT src.*
+    FROM src
+    LEFT JOIN bl_3nf.ce_card_types crt
+      ON crt.card_type_name = src.card_type_name
+     AND crt.source_system  = src.source_system
+     AND crt.source_entity  = src.source_entity
+    WHERE crt.card_type_id IS NULL
+)
+INSERT INTO bl_3nf.ce_card_types (
+    card_type_name, source_system, source_entity, source_id,
+    ta_insert_dt, ta_update_dt
+)
+SELECT
+    card_type_name, source_system, source_entity, source_id,
+    now(), now()
+FROM to_insert;
+
+COMMIT;
+
+BEGIN;
+
+WITH src AS (
+    SELECT DISTINCT
+        COALESCE(spo.payment_method, 'n. a.') AS payment_method_name,
+        'sa_sales_pos'                        AS source_system,
+        'src_sales_pos'                       AS source_entity,
+        COALESCE(spo.payment_method, 'n. a.') AS source_id
+    FROM sa_sales_pos.src_sales_pos spo
+    WHERE spo.payment_method IS NOT NULL
+),
+to_insert AS (
+    SELECT src.*
+    FROM src
+    LEFT JOIN bl_3nf.ce_payment_methods pmt
+      ON pmt.payment_method_name = src.payment_method_name
+     AND pmt.source_system       = src.source_system
+     AND pmt.source_entity       = src.source_entity
+    WHERE pmt.payment_method_id IS NULL
+)
+INSERT INTO bl_3nf.ce_payment_methods (
+    payment_method_name, source_system, source_entity, source_id,
+    ta_insert_dt, ta_update_dt
+)
+SELECT
+    payment_method_name, source_system, source_entity, source_id,
+    now(), now()
+FROM to_insert;
+
+COMMIT;
+
+BEGIN;
+
+WITH src AS (
+    SELECT DISTINCT
+        COALESCE(spo.receipt_type, 'n. a.') AS receipt_type_name,
+        'sa_sales_pos'                      AS source_system,
+        'src_sales_pos'                     AS source_entity,
+        COALESCE(spo.receipt_type, 'n. a.') AS source_id
+    FROM sa_sales_pos.src_sales_pos spo
+    WHERE spo.receipt_type IS NOT NULL
+),
+to_insert AS (
+    SELECT src.*
+    FROM src
+    LEFT JOIN bl_3nf.ce_receipt_types rct
+      ON rct.receipt_type_name = src.receipt_type_name
+     AND rct.source_system     = src.source_system
+     AND rct.source_entity     = src.source_entity
+    WHERE rct.receipt_type_id IS NULL
+)
+INSERT INTO bl_3nf.ce_receipt_types (
+    receipt_type_name, source_system, source_entity, source_id,
+    ta_insert_dt, ta_update_dt
+)
+SELECT
+    receipt_type_name, source_system, source_entity, source_id,
+    now(), now()
+FROM to_insert;
+
+COMMIT;
+SELECT * FROM bl_3nf.ce_card_types;
+SELECT * FROM bl_3nf.ce_payment_methods;
+SELECT * FROM bl_3nf.ce_receipt_types;
+
+--ce_customers_scd  type2
+BEGIN;
+
+INSERT INTO bl_3nf.ce_customers_scd (
+    customer_id,
+    customer_src_id,
+    first_name,
+    last_name,
+    email,
+    phone,
+    age_grp,
+    customer_segment,
+    gender,
+    start_dt,
+    end_dt,
+    is_active,
+    source_system,
+    source_entity,
+    source_id,
+    ta_insert_dt,
+    ta_update_dt
+)
+SELECT
+    -1,
+    'n. a.',
+    'n. a.',
+    'n. a.',
+    'n. a.',
+    'n. a.',
+    'n. a.',
+    'n. a.',
+    'n. a.',
+    DATE '1900-01-01',
+    DATE '9999-12-31',
+    TRUE,
+    'manual',
+    'manual',
+    'n. a.',
+    DATE '1900-01-01',
+    DATE '1900-01-01'
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM bl_3nf.ce_customers_scd cus
+    WHERE cus.customer_id = -1
+);
+
+COMMIT;
+
+BEGIN;
+
+WITH src_raw AS (
+    /* ONLINE */
+    SELECT
+        COALESCE(son.customer_src_id, 'n. a.')       AS customer_src_id,
+        COALESCE(son.customer_first_name, 'n. a.')   AS first_name,
+        COALESCE(son.customer_last_name, 'n. a.')    AS last_name,
+        COALESCE(son.customer_email, 'n. a.')        AS email,
+        COALESCE(son.customer_phone, 'n. a.')        AS phone,
+        COALESCE(son.customer_age_group, 'n. a.')    AS age_grp,
+        COALESCE(son.customer_segment, 'n. a.')      AS customer_segment,
+        COALESCE(son.gender, 'n. a.')                AS gender,
+        COALESCE(son.txn_ts, TIMESTAMP '1900-01-01') AS txn_ts,
+        'sa_sales_online'                             AS source_system,
+        'src_sales_online'                            AS source_entity,
+        COALESCE(son.customer_src_id, 'n. a.')       AS source_id
+    FROM sa_sales_online.src_sales_online son
+    WHERE son.customer_src_id IS NOT NULL
+
+    UNION ALL
+
+    /* POS */
+    SELECT
+        COALESCE(spo.customer_src_id, 'n. a.')       AS customer_src_id,
+        'n. a.'                                      AS first_name,
+        'n. a.'                                      AS last_name,
+        'n. a.'                                      AS email,
+        COALESCE(spo.customer_phone, 'n. a.')        AS phone,
+        COALESCE(spo.customer_age_group, 'n. a.')    AS age_grp,
+        COALESCE(spo.customer_segment, 'n. a.')      AS customer_segment,
+        'n. a.'                                      AS gender,
+        COALESCE(spo.txn_ts, TIMESTAMP '1900-01-01') AS txn_ts,
+        'sa_sales_pos'                                AS source_system,
+        'src_sales_pos'                               AS source_entity,
+        COALESCE(spo.customer_src_id, 'n. a.')       AS source_id
+    FROM sa_sales_pos.src_sales_pos spo
+    WHERE spo.customer_src_id IS NOT NULL
+),
+src AS (
+    SELECT DISTINCT ON (srr.customer_src_id, srr.source_system, srr.source_entity)
+        srr.customer_src_id,
+        srr.first_name,
+        srr.last_name,
+        srr.email,
+        srr.phone,
+        srr.age_grp,
+        srr.customer_segment,
+        srr.gender,
+        srr.source_system,
+        srr.source_entity,
+        srr.source_id
+    FROM src_raw srr
+    ORDER BY
+        srr.customer_src_id,
+        srr.source_system,
+        srr.source_entity,
+        srr.txn_ts DESC
+),
+cur AS (
+    SELECT
+        cus.customer_id,
+        cus.customer_src_id,
+        cus.first_name,
+        cus.last_name,
+        cus.email,
+        cus.phone,
+        cus.age_grp,
+        cus.customer_segment,
+        cus.gender,
+        cus.source_system,
+        cus.source_entity
+    FROM bl_3nf.ce_customers_scd cus
+    WHERE cus.is_active = TRUE
+      AND cus.end_dt = DATE '9999-12-31'
+      AND cus.customer_id <> -1
+),
+chg AS (
+    SELECT
+        cur.customer_id,
+        src.customer_src_id,
+        src.first_name,
+        src.last_name,
+        src.email,
+        src.phone,
+        src.age_grp,
+        src.customer_segment,
+        src.gender,
+        src.source_system,
+        src.source_entity,
+        src.source_id
+    FROM src
+    JOIN cur
+      ON cur.customer_src_id = src.customer_src_id
+     AND cur.source_system   = src.source_system
+     AND cur.source_entity   = src.source_entity
+    WHERE
+        cur.first_name        IS DISTINCT FROM src.first_name
+     OR cur.last_name         IS DISTINCT FROM src.last_name
+     OR cur.email             IS DISTINCT FROM src.email
+     OR cur.phone             IS DISTINCT FROM src.phone
+     OR cur.age_grp           IS DISTINCT FROM src.age_grp
+     OR cur.customer_segment  IS DISTINCT FROM src.customer_segment
+     OR cur.gender            IS DISTINCT FROM src.gender
+),
+new_or_changed AS (
+    /* NEW */
+    SELECT
+        src.customer_src_id,
+        src.first_name,
+        src.last_name,
+        src.email,
+        src.phone,
+        src.age_grp,
+        src.customer_segment,
+        src.gender,
+        src.source_system,
+        src.source_entity,
+        src.source_id
+    FROM src
+    LEFT JOIN cur
+      ON cur.customer_src_id = src.customer_src_id
+     AND cur.source_system   = src.source_system
+     AND cur.source_entity   = src.source_entity
+    WHERE cur.customer_id IS NULL
+
+    UNION ALL
+
+    /* CHANGED */
+    SELECT
+        chg.customer_src_id,
+        chg.first_name,
+        chg.last_name,
+        chg.email,
+        chg.phone,
+        chg.age_grp,
+        chg.customer_segment,
+        chg.gender,
+        chg.source_system,
+        chg.source_entity,
+        chg.source_id
+    FROM chg
+),
+upd AS (
+    UPDATE bl_3nf.ce_customers_scd cus
+    SET
+        end_dt       = CURRENT_DATE - 1,
+        is_active    = FALSE,
+        ta_update_dt = now()
+    FROM chg
+    WHERE cus.customer_id = chg.customer_id
+      AND cus.is_active = TRUE
+      AND cus.end_dt = DATE '9999-12-31'
+    RETURNING cus.customer_id
+)
+INSERT INTO bl_3nf.ce_customers_scd (
+    customer_src_id,
+    first_name,
+    last_name,
+    email,
+    phone,
+    age_grp,
+    customer_segment,
+    gender,
+    start_dt,
+    end_dt,
+    is_active,
+    source_system,
+    source_entity,
+    source_id,
+    ta_insert_dt,
+    ta_update_dt
+)
+SELECT
+    nac.customer_src_id,
+    nac.first_name,
+    nac.last_name,
+    nac.email,
+    nac.phone,
+    nac.age_grp,
+    nac.customer_segment,
+    nac.gender,
+    CURRENT_DATE,
+    DATE '9999-12-31',
+    TRUE,
+    nac.source_system,
+    nac.source_entity,
+    nac.source_id,
+    now(),
+    now()
+FROM new_or_changed nac
+LEFT JOIN bl_3nf.ce_customers_scd cus
+  ON cus.customer_src_id = nac.customer_src_id
+ AND cus.source_system   = nac.source_system
+ AND cus.source_entity   = nac.source_entity
+ AND cus.start_dt        = CURRENT_DATE
+WHERE cus.customer_id IS NULL;
+
+COMMIT;
+
+SELECT * FROM bl_3nf.ce_customers_scd;
 
 
+--ce_transactions
+
+BEGIN;
+
+CREATE INDEX IF NOT EXISTS ix_ce_transactions_bk
+ON bl_3nf.ce_transactions (txn_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_products_bk
+ON bl_3nf.ce_products (product_sku_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_promotions_bk
+ON bl_3nf.ce_promotions (promo_code, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_sales_channels_bk
+ON bl_3nf.ce_sales_channels (sales_channel_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_payment_methods_bk
+ON bl_3nf.ce_payment_methods (payment_method_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_card_types_bk
+ON bl_3nf.ce_card_types (card_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_receipt_types_bk
+ON bl_3nf.ce_receipt_types (receipt_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_stores_bk
+ON bl_3nf.ce_stores (store_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_terminals_bk
+ON bl_3nf.ce_terminals (terminal_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_employees_bk
+ON bl_3nf.ce_employees (employee_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_shifts_bk
+ON bl_3nf.ce_shifts (shift_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_order_statuses_bk
+ON bl_3nf.ce_order_statuses (order_status_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_delivery_providers_bk
+ON bl_3nf.ce_delivery_providers (carrier_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_delivery_types_bk
+ON bl_3nf.ce_delivery_types (delivery_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_device_types_bk
+ON bl_3nf.ce_device_types (device_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_payment_gateways_bk
+ON bl_3nf.ce_payment_gateways (payment_gateway_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_fulfillment_centers_bk
+ON bl_3nf.ce_fulfillment_centers (fulfillment_center_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_delivery_addresses_lkp
+ON bl_3nf.ce_delivery_addresses (delivery_postal_code, delivery_address_line1, city_id, source_system, source_entity);
+
+-- Active customers lookup (дуже важливо!)
+CREATE INDEX IF NOT EXISTS ix_ce_customers_active
+ON bl_3nf.ce_customers_scd (customer_src_id, source_system, source_entity)
+WHERE is_active = TRUE AND end_dt = DATE '9999-12-31';
+
+COMMIT;
+
+BEGIN;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE nsp.nspname = 'bl_3nf'
+          AND rel.relname = 'ce_delivery_addresses'
+          AND con.conname = 'uk_ce_delivery_addresses_bk'
+    ) THEN
+        ALTER TABLE bl_3nf.ce_delivery_addresses
+        ADD CONSTRAINT uk_ce_delivery_addresses_bk
+        UNIQUE (delivery_postal_code, delivery_address_line1, city_id, source_system, source_entity);
+    END IF;
+END $$;
+
+COMMIT;
+
+
+BEGIN;
+
+WITH src_raw AS (
+    /* ONLINE */
+    SELECT
+        COALESCE(son.web_order_id, 'n. a.')                 AS txn_src_id,
+        COALESCE(son.txn_ts, TIMESTAMP '1900-01-01')        AS txn_ts,
+        COALESCE(son.product_sku, 'n. a.')                  AS product_sku_src_id,
+        COALESCE(son.promo_code, 'n. a.')                   AS promo_code,
+        'online'                                            AS sales_channel_name,
+        COALESCE(son.customer_src_id, 'n. a.')              AS customer_src_id,
+        'n. a.'                                             AS payment_method_name,
+        'n. a.'                                             AS card_type_name,
+        'n. a.'                                             AS receipt_type_name,
+        'n. a.'                                             AS store_src_id,
+        'n. a.'                                             AS terminal_src_id,
+        'n. a.'                                             AS employee_src_id,
+        'n. a.'                                             AS shift_src_id,
+        COALESCE(son.order_status, 'n. a.')                 AS order_status_name,
+        COALESCE(son.carrier_name, 'n. a.')                 AS carrier_name,
+        COALESCE(son.delivery_type, 'n. a.')                AS delivery_type_name,
+
+        COALESCE(son.delivery_postal_code, 'n. a.')         AS delivery_postal_code,
+        COALESCE(son.delivery_address_line1, 'n. a.')       AS delivery_address_line1,
+        COALESCE(son.city, 'n. a.')                         AS city_name,
+        COALESCE(son.region, 'n. a.')                       AS region_name,
+        COALESCE(son.country, 'n. a.')                      AS country_name,
+
+        COALESCE(son.fulfillment_center_id, 'n. a.')        AS fulfillment_center_src_id,
+        COALESCE(son.fulfillment_city, 'n. a.')             AS fulfillment_city_name,
+
+        COALESCE(son.device_type, 'n. a.')                  AS device_type_name,
+        COALESCE(son.payment_gateway, 'n. a.')              AS payment_gateway_name,
+
+        COALESCE(son.tracking_id, 'n. a.')                  AS tracking_id,
+        COALESCE(son.promised_delivery_dt, DATE '1900-01-01') AS promised_delivery_dt,
+
+        COALESCE(son.qty, -1)                               AS qty,
+        COALESCE(son.unit_price_amt, -1)                    AS unit_price_amt,
+        COALESCE(son.tax_amt, -1)                           AS tax_amt,
+        COALESCE(son.shipping_fee_amt, -1)                  AS shipping_fee_amt,
+        COALESCE(son.discount_amt, -1)                      AS discount_amt,
+        COALESCE(son.sales_amt, -1)                         AS sales_amt,
+        COALESCE(son.cost_amt, -1)                          AS cost_amt,
+        COALESCE(son.gross_profit_amt, -1)                  AS gross_profit_amt,
+        -1::INT 									        AS loyalty_points_earned,
+        COALESCE(son.customer_rating, -1)                   AS customer_rating,
+
+        'sa_sales_online'                                   AS source_system,
+        'src_sales_online'                                  AS source_entity,
+        COALESCE(son.web_order_id, 'n. a.')                 AS source_id
+    FROM sa_sales_online.src_sales_online son
+    WHERE son.web_order_id IS NOT NULL   
+	    AND son.txn_ts >= TIMESTAMP '2025-11-01'
+	  AND son.txn_ts <  TIMESTAMP '2025-11-10'
+	  
+
+
+    UNION ALL
+
+    /* POS */
+    SELECT
+        COALESCE(spo.ckout, 'n. a.')                        AS txn_src_id,
+        COALESCE(spo.txn_ts, TIMESTAMP '1900-01-01')        AS txn_ts,
+        COALESCE(spo.product_sku, 'n. a.')                  AS product_sku_src_id,
+        COALESCE(spo.promo_code, 'n. a.')                   AS promo_code,
+        'pos'                                               AS sales_channel_name,
+        COALESCE(spo.customer_src_id, 'n. a.')              AS customer_src_id,
+        COALESCE(spo.payment_method, 'n. a.')               AS payment_method_name,
+        COALESCE(spo.card_type, 'n. a.')                    AS card_type_name,
+        COALESCE(spo.receipt_type, 'n. a.')                 AS receipt_type_name,
+        COALESCE(spo.store_id, 'n. a.')                     AS store_src_id,
+        COALESCE(spo.terminal_id, 'n. a.')                  AS terminal_src_id,
+        COALESCE(spo.cashier_id, 'n. a.')                   AS employee_src_id,
+        COALESCE(spo.shift_id, 'n. a.')                     AS shift_src_id,
+        'n. a.'                                             AS order_status_name,
+        'n. a.'                                             AS carrier_name,
+        'n. a.'                                             AS delivery_type_name,
+
+        'n. a.'                                             AS delivery_postal_code,
+        'n. a.'                                             AS delivery_address_line1,
+        'n. a.'                                             AS city_name,
+        'n. a.'                                             AS region_name,
+        'n. a.'                                             AS country_name,
+
+        'n. a.'                                             AS fulfillment_center_src_id,
+        'n. a.'                                             AS fulfillment_city_name,
+
+        'n. a.'                                             AS device_type_name,
+        'n. a.'                                             AS payment_gateway_name,
+
+        'n. a.'                                             AS tracking_id,
+        DATE '1900-01-01'                                   AS promised_delivery_dt,
+
+        COALESCE(spo.qty, -1)                               AS qty,
+        COALESCE(spo.unit_price_amt, -1)                    AS unit_price_amt,
+        COALESCE(spo.tax_amt, -1)                           AS tax_amt,
+        -1                                                  AS shipping_fee_amt,
+        COALESCE(spo.discount_amt, -1)                      AS discount_amt,
+        COALESCE(spo.sales_amt, -1)                         AS sales_amt,
+        COALESCE(spo.cost_amt, -1)                          AS cost_amt,
+        COALESCE(spo.gross_profit_amt, -1)                  AS gross_profit_amt,
+        COALESCE(spo.loyalty_points_earned, -1)::INT        AS loyalty_points_earned,
+        COALESCE(spo.customer_rating, -1)                   AS customer_rating,
+
+        'sa_sales_pos'                                      AS source_system,
+        'src_sales_pos'                                     AS source_entity,
+        COALESCE(spo.ckout, 'n. a.')                        AS source_id
+    FROM sa_sales_pos.src_sales_pos spo
+    WHERE spo.ckout IS NOT NULL
+    AND spo.txn_ts >= TIMESTAMP '2025-11-01'
+	  AND spo.txn_ts <  TIMESTAMP '2025-11-10'),
+   
+src AS (
+   
+    SELECT DISTINCT ON (srr.txn_src_id, srr.source_system, srr.source_entity)
+        srr.*
+    FROM src_raw srr
+    ORDER BY
+        srr.txn_src_id,
+        srr.source_system,
+        srr.source_entity,
+        srr.txn_ts DESC
+),
+map AS (
+    SELECT
+        src.txn_src_id,
+        src.txn_ts,
+
+        COALESCE(prd.product_id, -1)           AS product_id,
+        COALESCE(pro.promotion_id, -1)         AS promotion_id,
+        COALESCE(sch.sales_channel_id, -1)     AS sales_channel_id,
+        COALESCE(cus.customer_id, -1)          AS customer_id,
+        COALESCE(pmt.payment_method_id, -1)    AS payment_method_id,
+        COALESCE(crt.card_type_id, -1)         AS card_type_id,
+        COALESCE(rct.receipt_type_id, -1)      AS receipt_type_id,
+        COALESCE(str.store_id, -1)             AS store_id,
+        COALESCE(ter.terminal_id, -1)          AS terminal_id,
+        COALESCE(emp.employee_id, -1)          AS employee_id,
+        COALESCE(sft.shift_id, -1)             AS shift_id,
+        COALESCE(ord.order_status_id, -1)      AS order_status_id,
+        COALESCE(dpr.delivery_provider_id, -1) AS delivery_provider_id,
+        COALESCE(dty.delivery_type_id, -1)     AS delivery_type_id,
+        COALESCE(adr.delivery_address_id, -1)  AS delivery_address_id,
+        COALESCE(ful.fulfillment_center_id, -1) AS fulfillment_center_id,
+        COALESCE(dvc.device_type_id, -1)       AS device_type_id,
+        COALESCE(pgw.payment_gateway_id, -1)   AS payment_gateway_id,
+
+        src.tracking_id,
+        src.promised_delivery_dt,
+
+        src.qty,
+        src.unit_price_amt,
+        src.tax_amt,
+        src.shipping_fee_amt,
+        src.discount_amt,
+        src.sales_amt,
+        src.cost_amt,
+        src.gross_profit_amt,
+        src.loyalty_points_earned,
+        src.customer_rating,
+
+        src.source_system,
+        src.source_entity,
+        src.source_id
+    FROM src
+
+    LEFT JOIN bl_3nf.ce_products prd
+      ON prd.product_sku_src_id = src.product_sku_src_id
+     AND prd.source_system      = src.source_system
+     AND prd.source_entity      = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_promotions pro
+      ON pro.promo_code     = src.promo_code
+     AND pro.source_system  = src.source_system
+     AND pro.source_entity  = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_sales_channels sch
+      ON sch.sales_channel_name = src.sales_channel_name
+     AND sch.source_system      = src.source_system
+     AND sch.source_entity      = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_customers_scd cus
+      ON cus.customer_src_id = src.customer_src_id
+     AND cus.source_system   = src.source_system
+     AND cus.source_entity   = src.source_entity
+     AND cus.is_active       = TRUE
+     AND cus.end_dt          = DATE '9999-12-31'
+
+    LEFT JOIN bl_3nf.ce_payment_methods pmt
+      ON pmt.payment_method_name = src.payment_method_name
+     AND pmt.source_system       = src.source_system
+     AND pmt.source_entity       = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_card_types crt
+      ON crt.card_type_name = src.card_type_name
+     AND crt.source_system  = src.source_system
+     AND crt.source_entity  = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_receipt_types rct
+      ON rct.receipt_type_name = src.receipt_type_name
+     AND rct.source_system     = src.source_system
+     AND rct.source_entity     = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_stores str
+      ON str.store_src_id   = src.store_src_id
+     AND str.source_system  = src.source_system
+     AND str.source_entity  = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_terminals ter
+      ON ter.terminal_src_id = src.terminal_src_id
+     AND ter.source_system   = src.source_system
+     AND ter.source_entity   = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_employees emp
+      ON emp.employee_src_id = src.employee_src_id
+     AND emp.source_system   = src.source_system
+     AND emp.source_entity   = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_shifts sft
+      ON sft.shift_src_id   = src.shift_src_id
+     AND sft.source_system  = src.source_system
+     AND sft.source_entity  = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_order_statuses ord
+      ON ord.order_status_name = src.order_status_name
+     AND ord.source_system     = src.source_system
+     AND ord.source_entity     = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_delivery_providers dpr
+      ON dpr.carrier_name   = src.carrier_name
+     AND dpr.source_system  = src.source_system
+     AND dpr.source_entity  = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_delivery_types dty
+      ON dty.delivery_type_name = src.delivery_type_name
+     AND dty.source_system      = src.source_system
+     AND dty.source_entity      = src.source_entity
+
+    
+    LEFT JOIN bl_3nf.ce_countries ctr
+      ON ctr.country_name  = src.country_name
+     AND ctr.source_system = src.source_system
+     AND ctr.source_entity = src.source_entity
+    LEFT JOIN bl_3nf.ce_regions reg
+      ON reg.region_name   = src.region_name
+     AND reg.country_id    = ctr.country_id
+     AND reg.source_system = src.source_system
+     AND reg.source_entity = src.source_entity
+    LEFT JOIN bl_3nf.ce_cities cty
+      ON cty.city_name     = src.city_name
+     AND cty.region_id     = reg.region_id
+     AND cty.source_system = src.source_system
+     AND cty.source_entity = src.source_entity
+    
+    LEFT JOIN bl_3nf.ce_fulfillment_centers ful
+      ON ful.fulfillment_center_src_id = src.fulfillment_center_src_id
+     AND ful.source_system             = src.source_system
+     AND ful.source_entity             = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_device_types dvc
+      ON dvc.device_type_name = src.device_type_name
+     AND dvc.source_system    = src.source_system
+     AND dvc.source_entity    = src.source_entity
+
+    LEFT JOIN bl_3nf.ce_payment_gateways pgw
+      ON pgw.payment_gateway_name = src.payment_gateway_name
+     AND pgw.source_system        = src.source_system
+     AND pgw.source_entity        = src.source_entity
+     
+     LEFT JOIN bl_3nf.ce_delivery_addresses adr
+	  ON adr.delivery_postal_code   = src.delivery_postal_code
+	 AND adr.delivery_address_line1 = src.delivery_address_line1
+	 AND adr.city_id                = COALESCE(cty.city_id, -1)
+	 AND adr.source_system          = src.source_system
+	 AND adr.source_entity          = src.source_entity
+
+),
+to_insert AS (
+    SELECT DISTINCT ON (map.txn_src_id, map.source_system, map.source_entity)
+        map.*
+    FROM map
+    LEFT JOIN bl_3nf.ce_transactions trx
+      ON trx.txn_src_id     = map.txn_src_id
+     AND trx.source_system  = map.source_system
+     AND trx.source_entity  = map.source_entity
+    WHERE trx.txn_id IS NULL
+    ORDER BY
+        map.txn_src_id,
+        map.source_system,
+        map.source_entity,
+        map.txn_ts DESC
+)
+
+INSERT INTO bl_3nf.ce_transactions (
+    txn_src_id, txn_ts,
+    product_id, promotion_id, sales_channel_id, customer_id,
+    payment_method_id, card_type_id, receipt_type_id,
+    store_id, terminal_id, employee_id, shift_id,
+    order_status_id, delivery_provider_id, delivery_type_id,
+    delivery_address_id, fulfillment_center_id, device_type_id, payment_gateway_id,
+    tracking_id, promised_delivery_dt,
+    qty, unit_price_amt, tax_amt, shipping_fee_amt, discount_amt,
+    sales_amt, cost_amt, gross_profit_amt,
+    loyalty_points_earned, customer_rating,
+    source_system, source_entity, source_id,
+    ta_insert_dt, ta_update_dt
+)
+SELECT
+    tin.txn_src_id, tin.txn_ts,
+    tin.product_id, tin.promotion_id, tin.sales_channel_id, tin.customer_id,
+    tin.payment_method_id, tin.card_type_id, tin.receipt_type_id,
+    tin.store_id, tin.terminal_id, tin.employee_id, tin.shift_id,
+    tin.order_status_id, tin.delivery_provider_id, tin.delivery_type_id,
+    tin.delivery_address_id, tin.fulfillment_center_id, tin.device_type_id, tin.payment_gateway_id,
+    tin.tracking_id, tin.promised_delivery_dt,
+    tin.qty, tin.unit_price_amt, tin.tax_amt, tin.shipping_fee_amt, tin.discount_amt,
+    tin.sales_amt, tin.cost_amt, tin.gross_profit_amt,
+    tin.loyalty_points_earned, tin.customer_rating,
+    tin.source_system, tin.source_entity, tin.source_id,
+    now(), now()
+FROM to_insert tin;
+
+COMMIT;
+
+SELECT count(*) FROM bl_3nf.ce_transactions;

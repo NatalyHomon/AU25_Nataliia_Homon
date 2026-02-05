@@ -589,4 +589,246 @@ CREATE TABLE IF NOT EXISTS bl_3nf.ce_employees (
 
 COMMIT;
 
+--ce_device_types
+BEGIN;
+
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_device_type_id;
+
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_device_types (
+    device_type_id    BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_device_type_id'),
+    device_type_name  VARCHAR(40) NOT NULL,
+
+    source_system     VARCHAR(30)  NOT NULL,
+    source_entity     VARCHAR(60)  NOT NULL,
+    source_id         VARCHAR(100) NOT NULL,
+
+    ta_insert_dt      TIMESTAMP NOT NULL,
+    ta_update_dt      TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_device_types PRIMARY KEY (device_type_id),
+    CONSTRAINT uk_ce_device_types UNIQUE (device_type_name, source_system, source_entity)
+);
+
+COMMIT;
+
+--
+BEGIN;
+
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_order_status_id;
+
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_order_statuses (
+    order_status_id    BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_order_status_id'),
+    order_status_name  VARCHAR(40) NOT NULL,
+
+    source_system      VARCHAR(30)  NOT NULL,
+    source_entity      VARCHAR(60)  NOT NULL,
+    source_id          VARCHAR(100) NOT NULL,
+
+    ta_insert_dt       TIMESTAMP NOT NULL,
+    ta_update_dt       TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_order_statuses PRIMARY KEY (order_status_id),
+    CONSTRAINT uk_ce_order_statuses UNIQUE (order_status_name, source_system, source_entity)
+);
+COMMIT;
+
+--ce_sales_channels
+BEGIN;
+
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_sales_channel_id;
+
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_sales_channels (
+    sales_channel_id    BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_sales_channel_id'),
+    sales_channel_name  VARCHAR(20) NOT NULL,
+
+    source_system       VARCHAR(30)  NOT NULL,
+    source_entity       VARCHAR(60)  NOT NULL,
+    source_id           VARCHAR(100) NOT NULL,
+
+    ta_insert_dt        TIMESTAMP NOT NULL,
+    ta_update_dt        TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_sales_channels PRIMARY KEY (sales_channel_id),
+    CONSTRAINT uk_ce_sales_channels UNIQUE (sales_channel_name, source_system, source_entity)
+);
+COMMIT;
+
+BEGIN;
+
+/* SEQUENCES */
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_card_type_id;
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_payment_method_id;
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_receipt_type_id;
+
+/* CE_CARD_TYPES */
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_card_types (
+    card_type_id     BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_card_type_id'),
+    card_type_name   VARCHAR(40) NOT NULL,
+
+    source_system    VARCHAR(30)  NOT NULL,
+    source_entity    VARCHAR(60)  NOT NULL,
+    source_id        VARCHAR(100) NOT NULL,
+
+    ta_insert_dt     TIMESTAMP NOT NULL,
+    ta_update_dt     TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_card_types PRIMARY KEY (card_type_id),
+    CONSTRAINT uk_ce_card_types UNIQUE (card_type_name, source_system, source_entity)
+);
+
+/* CE_PAYMENT_METHODS */
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_payment_methods (
+    payment_method_id    BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_payment_method_id'),
+    payment_method_name  VARCHAR(40) NOT NULL,
+
+    source_system        VARCHAR(30)  NOT NULL,
+    source_entity        VARCHAR(60)  NOT NULL,
+    source_id            VARCHAR(100) NOT NULL,
+
+    ta_insert_dt         TIMESTAMP NOT NULL,
+    ta_update_dt         TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_payment_methods PRIMARY KEY (payment_method_id),
+    CONSTRAINT uk_ce_payment_methods UNIQUE (payment_method_name, source_system, source_entity)
+);
+
+/* CE_RECEIPT_TYPES */
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_receipt_types (
+    receipt_type_id    BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_receipt_type_id'),
+    receipt_type_name  VARCHAR(40) NOT NULL,
+
+    source_system      VARCHAR(30)  NOT NULL,
+    source_entity      VARCHAR(60)  NOT NULL,
+    source_id          VARCHAR(100) NOT NULL,
+
+    ta_insert_dt       TIMESTAMP NOT NULL,
+    ta_update_dt       TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_receipt_types PRIMARY KEY (receipt_type_id),
+    CONSTRAINT uk_ce_receipt_types UNIQUE (receipt_type_name, source_system, source_entity)
+);
+
+COMMIT;
+
+--ce_customers_scd 
+BEGIN;
+
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_customer_id;
+
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_customers_scd (
+    customer_id         BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_customer_id'),
+    customer_src_id     VARCHAR(100) NOT NULL,
+
+    first_name          VARCHAR(100) NOT NULL,
+    last_name           VARCHAR(100) NOT NULL,
+    email               VARCHAR(255) NOT NULL,
+    phone               VARCHAR(30)  NOT NULL,
+    age_grp             VARCHAR(20)  NOT NULL,
+    customer_segment    VARCHAR(30)  NOT NULL,
+    gender              VARCHAR(20)  NOT NULL,
+
+    start_dt            DATE NOT NULL,
+    end_dt              DATE NOT NULL,
+    is_active           BOOLEAN NOT NULL,
+
+    source_system       VARCHAR(30)  NOT NULL,
+    source_entity       VARCHAR(60)  NOT NULL,
+    source_id           VARCHAR(100) NOT NULL,
+
+    ta_insert_dt        TIMESTAMP NOT NULL,
+    ta_update_dt        TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_customers_scd
+        PRIMARY KEY (customer_id, start_dt),
+        
+    CONSTRAINT uk_ce_customers_scd_customer_id
+        UNIQUE (customer_id),
+
+    CONSTRAINT uk_ce_customers_scd_nk
+        UNIQUE (customer_src_id, source_system, source_entity, start_dt),
+
+    CONSTRAINT ck_ce_customers_scd_dates
+        CHECK (end_dt >= start_dt)
+);
+
+COMMIT;
+
+--ce_transactions
+BEGIN;
+
+CREATE SEQUENCE IF NOT EXISTS bl_3nf.seq_ce_txn_id;
+
+CREATE TABLE IF NOT EXISTS bl_3nf.ce_transactions (
+    txn_id                 BIGINT NOT NULL DEFAULT nextval('bl_3nf.seq_ce_txn_id'),
+    txn_src_id             VARCHAR(100) NOT NULL,
+    txn_ts                 TIMESTAMP NOT NULL,
+
+    product_id             BIGINT NOT NULL,
+    promotion_id           BIGINT NOT NULL,
+    sales_channel_id       BIGINT NOT NULL,
+    customer_id            BIGINT NOT NULL,
+    payment_method_id      BIGINT NOT NULL,
+    card_type_id           BIGINT NOT NULL,
+    receipt_type_id        BIGINT NOT NULL,
+    store_id               BIGINT NOT NULL,
+    terminal_id            BIGINT NOT NULL,
+    employee_id            BIGINT NOT NULL,
+    shift_id               BIGINT NOT NULL,
+    order_status_id        BIGINT NOT NULL,
+    delivery_provider_id   BIGINT NOT NULL,
+    delivery_type_id       BIGINT NOT NULL,
+    delivery_address_id    BIGINT NOT NULL,
+    fulfillment_center_id  BIGINT NOT NULL,
+    device_type_id         BIGINT NOT NULL,
+    payment_gateway_id     BIGINT NOT NULL,
+
+    tracking_id            VARCHAR(100) NOT NULL,
+    promised_delivery_dt   DATE NOT NULL,
+
+    qty                    INT NOT NULL,
+    unit_price_amt         DECIMAL(12,2) NOT NULL,
+    tax_amt                DECIMAL(12,2) NOT NULL,
+    shipping_fee_amt       DECIMAL(12,2) NOT NULL,
+    discount_amt           DECIMAL(12,2) NOT NULL,
+    sales_amt              DECIMAL(12,2) NOT NULL,
+    cost_amt               DECIMAL(12,2) NOT NULL,
+    gross_profit_amt       DECIMAL(12,2) NOT NULL,
+
+    loyalty_points_earned  INT NOT NULL,
+    customer_rating        DECIMAL(4,1) NOT NULL,
+
+    source_system          VARCHAR(30)  NOT NULL,
+    source_entity          VARCHAR(60)  NOT NULL,
+    source_id              VARCHAR(100) NOT NULL,
+
+    ta_insert_dt           TIMESTAMP NOT NULL,
+    ta_update_dt           TIMESTAMP NOT NULL,
+
+    CONSTRAINT pk_ce_transactions
+        PRIMARY KEY (txn_id),
+
+    CONSTRAINT uk_ce_transactions
+        UNIQUE (txn_src_id, source_system, source_entity),
+
+    CONSTRAINT fk_trx_product            FOREIGN KEY (product_id)            REFERENCES bl_3nf.ce_products(product_id),
+    CONSTRAINT fk_trx_promotion          FOREIGN KEY (promotion_id)          REFERENCES bl_3nf.ce_promotions(promotion_id),
+    CONSTRAINT fk_trx_sales_channel      FOREIGN KEY (sales_channel_id)      REFERENCES bl_3nf.ce_sales_channels(sales_channel_id),
+    CONSTRAINT fk_trx_customer           FOREIGN KEY (customer_id)           REFERENCES bl_3nf.ce_customers_scd(customer_id),
+    CONSTRAINT fk_trx_payment_method     FOREIGN KEY (payment_method_id)     REFERENCES bl_3nf.ce_payment_methods(payment_method_id),
+    CONSTRAINT fk_trx_card_type          FOREIGN KEY (card_type_id)          REFERENCES bl_3nf.ce_card_types(card_type_id),
+    CONSTRAINT fk_trx_receipt_type       FOREIGN KEY (receipt_type_id)       REFERENCES bl_3nf.ce_receipt_types(receipt_type_id),
+    CONSTRAINT fk_trx_store              FOREIGN KEY (store_id)              REFERENCES bl_3nf.ce_stores(store_id),
+    CONSTRAINT fk_trx_terminal           FOREIGN KEY (terminal_id)           REFERENCES bl_3nf.ce_terminals(terminal_id),
+    CONSTRAINT fk_trx_employee           FOREIGN KEY (employee_id)           REFERENCES bl_3nf.ce_employees(employee_id),
+    CONSTRAINT fk_trx_shift              FOREIGN KEY (shift_id)              REFERENCES bl_3nf.ce_shifts(shift_id),
+    CONSTRAINT fk_trx_order_status       FOREIGN KEY (order_status_id)       REFERENCES bl_3nf.ce_order_statuses(order_status_id),
+    CONSTRAINT fk_trx_delivery_provider  FOREIGN KEY (delivery_provider_id)  REFERENCES bl_3nf.ce_delivery_providers(delivery_provider_id),
+    CONSTRAINT fk_trx_delivery_type      FOREIGN KEY (delivery_type_id)      REFERENCES bl_3nf.ce_delivery_types(delivery_type_id),
+    CONSTRAINT fk_trx_delivery_address   FOREIGN KEY (delivery_address_id)   REFERENCES bl_3nf.ce_delivery_addresses(delivery_address_id),
+    CONSTRAINT fk_trx_fulfillment_center FOREIGN KEY (fulfillment_center_id) REFERENCES bl_3nf.ce_fulfillment_centers(fulfillment_center_id),
+    CONSTRAINT fk_trx_device_type        FOREIGN KEY (device_type_id)        REFERENCES bl_3nf.ce_device_types(device_type_id),
+    CONSTRAINT fk_trx_payment_gateway    FOREIGN KEY (payment_gateway_id)    REFERENCES bl_3nf.ce_payment_gateways(payment_gateway_id)
+);
+
+COMMIT;
 
