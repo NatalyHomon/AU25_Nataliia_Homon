@@ -2206,90 +2206,7 @@ SELECT * FROM bl_3nf.ce_customers_scd;
 
 
 --ce_transactions
-
-BEGIN;
-
-CREATE INDEX IF NOT EXISTS ix_ce_transactions_bk
-ON bl_3nf.ce_transactions (txn_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_products_bk
-ON bl_3nf.ce_products (product_sku_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_promotions_bk
-ON bl_3nf.ce_promotions (promo_code, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_sales_channels_bk
-ON bl_3nf.ce_sales_channels (sales_channel_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_payment_methods_bk
-ON bl_3nf.ce_payment_methods (payment_method_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_card_types_bk
-ON bl_3nf.ce_card_types (card_type_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_receipt_types_bk
-ON bl_3nf.ce_receipt_types (receipt_type_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_stores_bk
-ON bl_3nf.ce_stores (store_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_terminals_bk
-ON bl_3nf.ce_terminals (terminal_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_employees_bk
-ON bl_3nf.ce_employees (employee_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_shifts_bk
-ON bl_3nf.ce_shifts (shift_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_order_statuses_bk
-ON bl_3nf.ce_order_statuses (order_status_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_delivery_providers_bk
-ON bl_3nf.ce_delivery_providers (carrier_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_delivery_types_bk
-ON bl_3nf.ce_delivery_types (delivery_type_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_device_types_bk
-ON bl_3nf.ce_device_types (device_type_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_payment_gateways_bk
-ON bl_3nf.ce_payment_gateways (payment_gateway_name, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_fulfillment_centers_bk
-ON bl_3nf.ce_fulfillment_centers (fulfillment_center_src_id, source_system, source_entity);
-
-CREATE INDEX IF NOT EXISTS ix_ce_delivery_addresses_lkp
-ON bl_3nf.ce_delivery_addresses (delivery_postal_code, delivery_address_line1, city_id, source_system, source_entity);
-
--- Active customers lookup (дуже важливо!)
-CREATE INDEX IF NOT EXISTS ix_ce_customers_active
-ON bl_3nf.ce_customers_scd (customer_src_id, source_system, source_entity)
-WHERE is_active = TRUE AND end_dt = DATE '9999-12-31';
-
-COMMIT;
-
-BEGIN;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
-        WHERE nsp.nspname = 'bl_3nf'
-          AND rel.relname = 'ce_delivery_addresses'
-          AND con.conname = 'uk_ce_delivery_addresses_bk'
-    ) THEN
-        ALTER TABLE bl_3nf.ce_delivery_addresses
-        ADD CONSTRAINT uk_ce_delivery_addresses_bk
-        UNIQUE (delivery_postal_code, delivery_address_line1, city_id, source_system, source_entity);
-    END IF;
-END $$;
-
-COMMIT;
+--had iisues with this table => was loading more then 30min, found that adding indexes and additional function could spead this process
 
 
 BEGIN;
@@ -2345,9 +2262,7 @@ WITH src_raw AS (
         COALESCE(son.web_order_id, 'n. a.')                 AS source_id
     FROM sa_sales_online.src_sales_online son
     WHERE son.web_order_id IS NOT NULL   
-	    AND son.txn_ts >= TIMESTAMP '2025-11-01'
-	  AND son.txn_ts <  TIMESTAMP '2025-11-10'
-	  
+	   
 
 
     UNION ALL
@@ -2402,8 +2317,9 @@ WITH src_raw AS (
         COALESCE(spo.ckout, 'n. a.')                        AS source_id
     FROM sa_sales_pos.src_sales_pos spo
     WHERE spo.ckout IS NOT NULL
-    AND spo.txn_ts >= TIMESTAMP '2025-11-01'
-	  AND spo.txn_ts <  TIMESTAMP '2025-11-10'),
+    --AND spo.txn_ts >= TIMESTAMP '2025-11-01'
+	--  AND spo.txn_ts <  TIMESTAMP '2025-11-10'
+	),
    
 src AS (
    
@@ -2618,3 +2534,4 @@ FROM to_insert tin;
 COMMIT;
 
 SELECT count(*) FROM bl_3nf.ce_transactions;
+SELECT * FROM bl_3nf.ce_transactions LIMIT 100;

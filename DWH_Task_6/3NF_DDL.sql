@@ -832,3 +832,149 @@ CREATE TABLE IF NOT EXISTS bl_3nf.ce_transactions (
 
 COMMIT;
 
+--triggers to automate update
+/*
+   BL_3NF: universal TA_UPDATE_DT trigger for ALL tables
+   Creates 1 reusable function + (re)creates triggers on every
+   table in schema bl_3nf that contains column ta_update_dt.
+   Rerunnable 
+    */
+
+BEGIN;
+
+/* 1) function */
+CREATE OR REPLACE FUNCTION bl_3nf.fn_set_ta_update_dt()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.ta_update_dt := now();
+    RETURN NEW;
+END;
+$$;
+
+/* 2) triggers for all tables having ta_update_dt */
+DO $$
+DECLARE
+    rec RECORD;
+    trg_name TEXT;
+BEGIN
+    FOR rec IN
+        SELECT
+            cols.table_schema,
+            cols.table_name
+        FROM information_schema.columns cols
+        WHERE cols.table_schema = 'bl_3nf'
+          AND cols.column_name  = 'ta_update_dt'
+        GROUP BY cols.table_schema, cols.table_name
+        ORDER BY cols.table_name
+    LOOP
+        trg_name := 'trg_' || rec.table_name || '_ta_update_dt';
+
+        EXECUTE format(
+            'DROP TRIGGER IF EXISTS %I ON %I.%I;',
+            trg_name, rec.table_schema, rec.table_name
+        );
+
+        EXECUTE format(
+            'CREATE TRIGGER %I
+             BEFORE UPDATE ON %I.%I
+             FOR EACH ROW
+             EXECUTE FUNCTION bl_3nf.fn_set_ta_update_dt();',
+            trg_name, rec.table_schema, rec.table_name
+        );
+    END LOOP;
+END $$;
+
+COMMIT;
+
+
+
+--ce_transactions
+--had iisues with this table => was loading more then 30min, found that adding indexes and additional function could spead this process
+
+BEGIN;
+
+CREATE INDEX IF NOT EXISTS ix_ce_transactions_bk
+ON bl_3nf.ce_transactions (txn_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_products_bk
+ON bl_3nf.ce_products (product_sku_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_promotions_bk
+ON bl_3nf.ce_promotions (promo_code, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_sales_channels_bk
+ON bl_3nf.ce_sales_channels (sales_channel_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_payment_methods_bk
+ON bl_3nf.ce_payment_methods (payment_method_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_card_types_bk
+ON bl_3nf.ce_card_types (card_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_receipt_types_bk
+ON bl_3nf.ce_receipt_types (receipt_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_stores_bk
+ON bl_3nf.ce_stores (store_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_terminals_bk
+ON bl_3nf.ce_terminals (terminal_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_employees_bk
+ON bl_3nf.ce_employees (employee_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_shifts_bk
+ON bl_3nf.ce_shifts (shift_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_order_statuses_bk
+ON bl_3nf.ce_order_statuses (order_status_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_delivery_providers_bk
+ON bl_3nf.ce_delivery_providers (carrier_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_delivery_types_bk
+ON bl_3nf.ce_delivery_types (delivery_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_device_types_bk
+ON bl_3nf.ce_device_types (device_type_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_payment_gateways_bk
+ON bl_3nf.ce_payment_gateways (payment_gateway_name, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_fulfillment_centers_bk
+ON bl_3nf.ce_fulfillment_centers (fulfillment_center_src_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_delivery_addresses_lkp
+ON bl_3nf.ce_delivery_addresses (delivery_postal_code, delivery_address_line1, city_id, source_system, source_entity);
+
+-- Active customers lookup 
+CREATE INDEX IF NOT EXISTS ix_ce_customers_active
+ON bl_3nf.ce_customers_scd (customer_src_id, source_system, source_entity)
+WHERE is_active = TRUE AND end_dt = DATE '9999-12-31';
+
+COMMIT;
+
+BEGIN;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE nsp.nspname = 'bl_3nf'
+          AND rel.relname = 'ce_delivery_addresses'
+          AND con.conname = 'uk_ce_delivery_addresses_bk'
+    ) THEN
+        ALTER TABLE bl_3nf.ce_delivery_addresses
+        ADD CONSTRAINT uk_ce_delivery_addresses_bk
+        UNIQUE (delivery_postal_code, delivery_address_line1, city_id, source_system, source_entity);
+    END IF;
+END $$;
+
+COMMIT;
+
+
