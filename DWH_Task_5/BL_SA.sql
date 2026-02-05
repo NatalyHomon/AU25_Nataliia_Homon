@@ -74,7 +74,7 @@ COMMIT;
 --2) Source table (src_...)
 BEGIN;
 
-DROP TABLE IF EXISTS sa_sales.src_sales_online;
+DROP TABLE IF EXISTS sa_sales_online.src_sales_online;
 
 CREATE TABLE sa_sales_online.src_sales_online (
     web_order_id              text NOT NULL,
