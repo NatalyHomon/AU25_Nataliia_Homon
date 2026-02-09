@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS bl_3nf.ce_countries (
     ta_update_dt    TIMESTAMP NOT NULL,
 
     CONSTRAINT pk_ce_countries PRIMARY KEY (country_id),
-    CONSTRAINT uk_ce_countries UNIQUE (country_name, source_system, source_entity)
+    CONSTRAINT uk_ce_countries UNIQUE (country_name, source_system, source_entity, source_id)
 );
 
 COMMIT;
@@ -342,6 +342,12 @@ CREATE TABLE IF NOT EXISTS bl_3nf.ce_stores (
     CONSTRAINT fk_ce_stores_city FOREIGN KEY (city_id)
         REFERENCES bl_3nf.ce_cities(city_id)
 );
+
+
+SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+FROM pg_constraint c
+WHERE c.conrelid = 'bl_3nf.ce_stores'::regclass
+ORDER BY c.conname;
 
 COMMIT;
 
@@ -832,65 +838,6 @@ CREATE TABLE IF NOT EXISTS bl_3nf.ce_transactions (
 
 COMMIT;
 
---triggers to automate update
-/*
-   BL_3NF: universal TA_UPDATE_DT trigger for ALL tables
-   Creates 1 reusable function + (re)creates triggers on every
-   table in schema bl_3nf that contains column ta_update_dt.
-   Rerunnable 
-    */
-
-BEGIN;
-
-/* 1) function */
-CREATE OR REPLACE FUNCTION bl_3nf.fn_set_ta_update_dt()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    NEW.ta_update_dt := now();
-    RETURN NEW;
-END;
-$$;
-
-/* 2) triggers for all tables having ta_update_dt */
-DO $$
-DECLARE
-    rec RECORD;
-    trg_name TEXT;
-BEGIN
-    FOR rec IN
-        SELECT
-            cols.table_schema,
-            cols.table_name
-        FROM information_schema.columns cols
-        WHERE cols.table_schema = 'bl_3nf'
-          AND cols.column_name  = 'ta_update_dt'
-        GROUP BY cols.table_schema, cols.table_name
-        ORDER BY cols.table_name
-    LOOP
-        trg_name := 'trg_' || rec.table_name || '_ta_update_dt';
-
-        EXECUTE format(
-            'DROP TRIGGER IF EXISTS %I ON %I.%I;',
-            trg_name, rec.table_schema, rec.table_name
-        );
-
-        EXECUTE format(
-            'CREATE TRIGGER %I
-             BEFORE UPDATE ON %I.%I
-             FOR EACH ROW
-             EXECUTE FUNCTION bl_3nf.fn_set_ta_update_dt();',
-            trg_name, rec.table_schema, rec.table_name
-        );
-    END LOOP;
-END $$;
-
-COMMIT;
-
-
-
---ce_transactions
 --had iisues with this table => was loading more then 30min, found that adding indexes and additional function could spead this process
 
 BEGIN;
@@ -976,5 +923,6 @@ BEGIN
 END $$;
 
 COMMIT;
+
 
 

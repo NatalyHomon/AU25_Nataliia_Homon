@@ -628,7 +628,7 @@ COMMIT;
 
 SELECT * FROM bl_3nf.ce_promotions;
 
---ce_countries SCD1
+--ce_countries SCD0
 BEGIN;
 
 INSERT INTO bl_3nf.ce_countries (
@@ -646,22 +646,14 @@ BEGIN;
 
 WITH src AS (
     SELECT DISTINCT
-        COALESCE(son.country, 'n. a.') AS country_name,
-        'sa_sales_online'              AS source_system,
-        'src_sales_online'             AS source_entity,
-        COALESCE(son.country, 'n. a.') AS source_id
-    FROM sa_sales_online.src_sales_online son
-    WHERE son.country IS NOT NULL
+        mpc.country_name               AS country_name,
+        'bl_cl'                        AS source_system,
+        't_map_countries'             AS source_entity,
+        mpc.country_src_name                 AS source_id
+    FROM bl_cl.t_map_countries mpc 
+    WHERE mpc.country_name IS NOT NULL
 
-    UNION ALL
-
-    SELECT DISTINCT
-        COALESCE(spo.country, 'n. a.') AS country_name,
-        'sa_sales_pos'                 AS source_system,
-        'src_sales_pos'                AS source_entity,
-        COALESCE(spo.country, 'n. a.') AS source_id
-    FROM sa_sales_pos.src_sales_pos spo
-    WHERE spo.country IS NOT NULL
+   
 )
 INSERT INTO bl_3nf.ce_countries (
     country_name, source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
@@ -669,11 +661,7 @@ INSERT INTO bl_3nf.ce_countries (
 SELECT
     src.country_name, src.source_system, src.source_entity, src.source_id, now(), now()
 FROM src
-ON CONFLICT (country_name, source_system, source_entity)
-DO UPDATE
-SET
-    source_id    = EXCLUDED.source_id,
-    ta_update_dt = now();
+ON CONFLICT (country_name, source_system, source_entity, source_id) DO NOTHING;
 
 COMMIT;
 
@@ -725,9 +713,8 @@ map AS (
         src.source_id
     FROM src
     LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.country_name  = src.country_name
-     AND ctr.source_system = src.source_system
-     AND ctr.source_entity = src.source_entity
+      ON ctr.source_id = src.country_name
+    
 )
 INSERT INTO bl_3nf.ce_regions (
     region_name, country_id, source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
@@ -793,9 +780,8 @@ map AS (
         src.source_id
     FROM src
     LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.country_name  = src.country_name
-     AND ctr.source_system = src.source_system
-     AND ctr.source_entity = src.source_entity
+      ON ctr.source_id = src.country_name
+     
     LEFT JOIN bl_3nf.ce_regions reg
       ON reg.region_name   = src.region_name
      AND reg.country_id    = ctr.country_id
@@ -877,8 +863,8 @@ COMMIT;
 
 BEGIN;
 
-WITH src_raw AS (
-    SELECT
+WITH src AS (
+    SELECT DISTINCT
         spo.store_id                      AS store_src_id,
         spo.store_format                  AS store_format_name,
         spo.store_open_dt,
@@ -891,25 +877,6 @@ WITH src_raw AS (
         'src_sales_pos'                   AS source_entity
     FROM sa_sales_pos.src_sales_pos spo
     WHERE spo.store_id IS NOT NULL
-),
-src AS (
-    SELECT
-        store_src_id,
-        source_system,
-        source_entity,
-
-        MAX(store_format_name) AS store_format_name,
-        MIN(store_open_dt)     AS store_open_dt,
-        MIN(store_open_time)   AS store_open_time,
-        MAX(store_close_time)  AS store_close_time,
-        MAX(city_name)         AS city_name,
-        MAX(region_name)       AS region_name,
-        MAX(country_name)      AS country_name
-    FROM src_raw
-    GROUP BY
-        store_src_id,
-        source_system,
-        source_entity
 ),
 map AS (
     SELECT
@@ -928,9 +895,7 @@ map AS (
      AND sft.source_system     = s.source_system
      AND sft.source_entity     = s.source_entity
     LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.country_name      = s.country_name
-     AND ctr.source_system     = s.source_system
-     AND ctr.source_entity     = s.source_entity
+      ON ctr.source_id      = s.country_name
     LEFT JOIN bl_3nf.ce_regions reg
       ON reg.region_name       = s.region_name
      AND reg.country_id        = ctr.country_id
@@ -950,7 +915,7 @@ SELECT
     map.store_src_id, map.store_format_id, map.store_open_dt, map.store_open_time, map.store_close_time, map.city_id,
     map.source_system, map.source_entity, map.source_id, now(), now()
 FROM map
-ON CONFLICT (store_src_id, source_system, source_entity)
+ON CONFLICT (store_src_id,  source_system, source_entity)
 DO UPDATE
 SET
     store_format_id  = EXCLUDED.store_format_id,
@@ -961,7 +926,6 @@ SET
     source_id        = EXCLUDED.source_id,
     ta_update_dt     = now();
 
-COMMIT;
 
 SELECT * FROM bl_3nf.ce_stores;
 
@@ -993,7 +957,8 @@ WHERE NOT EXISTS (
     SELECT 1
     FROM bl_3nf.ce_delivery_addresses dad
     WHERE dad.delivery_address_id = -1
-);
+)
+RETURNING *;
 
 COMMIT;
 
@@ -1022,9 +987,8 @@ map AS (
         src.source_id
     FROM src
     LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.country_name  = src.country_name
-     AND ctr.source_system = src.source_system
-     AND ctr.source_entity = src.source_entity
+      ON ctr.source_id  = src.country_name
+     
     LEFT JOIN bl_3nf.ce_regions reg
       ON reg.region_name   = src.region_name
      AND reg.country_id    = ctr.country_id
@@ -2203,6 +2167,7 @@ WHERE cus.customer_id IS NULL;
 COMMIT;
 
 SELECT * FROM bl_3nf.ce_customers_scd;
+SELECT count(*) FROM bl_3nf.ce_customers_scd;
 
 
 --ce_transactions
@@ -2317,8 +2282,7 @@ WITH src_raw AS (
         COALESCE(spo.ckout, 'n. a.')                        AS source_id
     FROM sa_sales_pos.src_sales_pos spo
     WHERE spo.ckout IS NOT NULL
-    --AND spo.txn_ts >= TIMESTAMP '2025-11-01'
-	--  AND spo.txn_ts <  TIMESTAMP '2025-11-10'
+    
 	),
    
 src AS (
@@ -2449,9 +2413,8 @@ map AS (
 
     
     LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.country_name  = src.country_name
-     AND ctr.source_system = src.source_system
-     AND ctr.source_entity = src.source_entity
+      ON ctr.source_id  = src.country_name
+    
     LEFT JOIN bl_3nf.ce_regions reg
       ON reg.region_name   = src.region_name
      AND reg.country_id    = ctr.country_id
