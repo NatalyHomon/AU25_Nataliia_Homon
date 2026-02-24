@@ -421,6 +421,7 @@ SELECT* FROM bl_dm.dim_stores;
 -------------------------------------------------------------------
   -- DIM_TERMINALS (3NF: ce_terminals + ce_terminal_types)
   -------------------------------------------------------------------
+
 CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_terminals_dm_simple()
 LANGUAGE plpgsql
 AS $$
@@ -790,7 +791,7 @@ BEGIN
     x.device_type_id,
 
     'BL_3NF'::varchar(30)          AS source_system,
-    'CE_TRANSACTIONS'::varchar(60) AS source_entity,
+    'MANUAL'::varchar(60) AS source_entity,
 
     concat_ws('|',
       x.sales_channel_id,
@@ -814,22 +815,15 @@ BEGIN
       shift_id,
       device_type_id
     FROM bl_3nf.ce_transactions
-    WHERE sales_channel_id <> -1
-      AND payment_method_id <> -1
-      AND card_type_id <> -1
-      AND receipt_type_id <> -1
-      AND payment_gateway_id <> -1
-      AND order_status_id <> -1
-      AND shift_id <> -1
-      AND device_type_id <> -1
+    
   ) x
-  JOIN bl_3nf.ce_sales_channels sc      ON sc.sales_channel_id     = x.sales_channel_id
-  JOIN bl_3nf.ce_payment_methods pm    ON pm.payment_method_id    = x.payment_method_id
-  JOIN bl_3nf.ce_card_types ct         ON ct.card_type_id         = x.card_type_id
-  JOIN bl_3nf.ce_receipt_types rt      ON rt.receipt_type_id      = x.receipt_type_id
-  JOIN bl_3nf.ce_payment_gateways pg   ON pg.payment_gateway_id   = x.payment_gateway_id
-  JOIN bl_3nf.ce_order_statuses os     ON os.order_status_id      = x.order_status_id
-  JOIN bl_3nf.ce_shifts sh             ON sh.shift_id             = x.shift_id
+  LEFT JOIN bl_3nf.ce_sales_channels sc      ON sc.sales_channel_id     = x.sales_channel_id
+  LEFT JOIN bl_3nf.ce_payment_methods pm    ON pm.payment_method_id    = x.payment_method_id
+  LEFT JOIN bl_3nf.ce_card_types ct         ON ct.card_type_id         = x.card_type_id
+  LEFT JOIN bl_3nf.ce_receipt_types rt      ON rt.receipt_type_id      = x.receipt_type_id
+  LEFT JOIN bl_3nf.ce_payment_gateways pg   ON pg.payment_gateway_id   = x.payment_gateway_id
+  LEFT JOIN bl_3nf.ce_order_statuses os     ON os.order_status_id      = x.order_status_id
+  LEFT JOIN bl_3nf.ce_shifts sh             ON sh.shift_id             = x.shift_id
 
   ON CONFLICT (source_system, source_entity, source_id)
   DO UPDATE SET
@@ -986,3 +980,12 @@ WHERE procedure_name = 'bl_cl.pr_load_dim_customers_scd_dm_simple'
 ORDER BY log_dts DESC; 
 
 SELECT* FROM bl_dm.dim_customers_scd;
+
+SELECT cus.customer_src_id, cus.email, cus.phone, cus.start_dt, cus.end_dt, cus.is_active, cus.source_system, cus.source_entity, cus.source_id
+FROM bl_dm.dim_customers_scd cus
+WHERE cus.customer_src_id IN(
+SELECT cus.customer_src_id
+FROM bl_dm.dim_customers_scd cus
+GROUP BY cus.customer_src_id
+HAVING count(cus.customer_src_id) >=3)
+ORDER BY cus.customer_src_id;
