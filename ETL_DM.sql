@@ -989,3 +989,137 @@ FROM bl_dm.dim_customers_scd cus
 GROUP BY cus.customer_src_id
 HAVING count(cus.customer_src_id) >=3)
 ORDER BY cus.customer_src_id;
+
+-------------------------------------------------------------------
+  --DIM_DATES_DAY
+  -------------------------------------------------------------------
+
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_dates_day_dm_simple()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_proc   text := 'bl_cl.pr_load_dim_dates_day_dm_simple';
+  v_run_id uuid := gen_random_uuid();
+  v_rows   bigint := 0;
+
+  v_min_date date;
+  v_max_date date;
+
+  -- logging context 
+  v_ctx bl_cl.t_source_ctx;
+BEGIN
+  v_ctx := ROW('bl_3nf','ce_transactions','BL_3NF','CE_TRANSACTIONS')::bl_cl.t_source_ctx;
+
+  IF to_regclass('bl_dm.dim_dates_day') IS NULL THEN
+    RAISE EXCEPTION 'Table bl_dm.dim_dates_day does not exist';
+  END IF;
+
+  CALL bl_cl.pr_log_write(
+    v_proc,'START',0,'Start load DIM_DATES_DAY (calendar generated from 3NF dates).',
+    NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
+
+	SELECT MIN(txn_ts::date), MAX(txn_ts::date)
+	INTO v_min_date, v_max_date
+	FROM bl_3nf.ce_transactions
+	WHERE txn_ts IS NOT NULL;
+
+  -- if there is no transactions in the 3nf
+ IF v_min_date IS NULL OR v_max_date IS NULL THEN
+    CALL bl_cl.pr_log_write(
+      v_proc,'SUCCESS',0,'DIM_DATES_DAY skipped: no source dates found in bl_3nf.ce_transactions.',
+      NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+    );
+    RETURN;
+  END IF;
+
+  WITH calendar AS (
+    SELECT gs::date AS d
+    FROM generate_series(v_min_date, v_max_date, interval '1 day') gs
+  ),
+  src AS (
+    SELECT
+      to_char(d,'YYYYMMDD')::int                       AS date_id,
+      EXTRACT(day FROM d)::smallint                    AS day,
+      EXTRACT(isodow FROM d)::smallint                 AS day_of_week,
+      to_char(d,'FMDay')                               AS day_name,
+      ( (EXTRACT(day FROM d)::int - 1) / 7 + 1 )::smallint AS week,              
+      EXTRACT(week FROM d)::smallint                   AS week_of_year,
+      EXTRACT(month FROM d)::smallint                  AS month,
+      to_char(d,'FMMonth')                             AS month_name,
+      EXTRACT(quarter FROM d)::smallint                AS quarter,
+      EXTRACT(year FROM d)::smallint                   AS year,
+      (EXTRACT(isodow FROM d) IN (6,7))                AS is_weekend
+    FROM calendar
+  )
+  INSERT INTO bl_dm.dim_dates_day (
+    date_id, day, day_of_week, day_name,
+    week, week_of_year,
+    month, month_name, quarter, year,
+    is_weekend
+  )
+  SELECT
+    date_id, day, day_of_week, day_name,
+    week, week_of_year,
+    month, month_name, quarter, year,
+    is_weekend
+  FROM src
+  ON CONFLICT (date_id)
+  DO UPDATE SET
+    day          = EXCLUDED.day,
+    day_of_week  = EXCLUDED.day_of_week,
+    day_name     = EXCLUDED.day_name,
+    week         = EXCLUDED.week,
+    week_of_year = EXCLUDED.week_of_year,
+    month        = EXCLUDED.month,
+    month_name   = EXCLUDED.month_name,
+    quarter      = EXCLUDED.quarter,
+    year         = EXCLUDED.year,
+    is_weekend   = EXCLUDED.is_weekend
+  WHERE
+    bl_dm.dim_dates_day.day          IS DISTINCT FROM EXCLUDED.day OR
+    bl_dm.dim_dates_day.day_of_week  IS DISTINCT FROM EXCLUDED.day_of_week OR
+    bl_dm.dim_dates_day.day_name     IS DISTINCT FROM EXCLUDED.day_name OR
+    bl_dm.dim_dates_day.week         IS DISTINCT FROM EXCLUDED.week OR
+    bl_dm.dim_dates_day.week_of_year IS DISTINCT FROM EXCLUDED.week_of_year OR
+    bl_dm.dim_dates_day.month        IS DISTINCT FROM EXCLUDED.month OR
+    bl_dm.dim_dates_day.month_name   IS DISTINCT FROM EXCLUDED.month_name OR
+    bl_dm.dim_dates_day.quarter      IS DISTINCT FROM EXCLUDED.quarter OR
+    bl_dm.dim_dates_day.year         IS DISTINCT FROM EXCLUDED.year OR
+    bl_dm.dim_dates_day.is_weekend   IS DISTINCT FROM EXCLUDED.is_weekend;
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  CALL bl_cl.pr_log_write(
+    v_proc,'SUCCESS',v_rows,
+    format('DIM_DATES_DAY loaded for range %s..%s.', v_min_date, v_max_date),
+    NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
+
+EXCEPTION WHEN OTHERS THEN
+  CALL bl_cl.pr_log_write(
+    v_proc,'ERROR',0,SQLERRM,SQLSTATE, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
+  RAISE;
+END;
+$$;
+
+
+-------------------------------------------------------------------
+  -- CHECK
+  -------------------------------------------------------------------
+
+CALL bl_cl.pr_load_dim_dates_day_dm_simple();
+
+
+SELECT log_dts,
+       procedure_name,
+       status,
+       rows_affected,
+       message
+FROM bl_cl.mta_etl_log
+WHERE procedure_name = 'bl_cl.pr_load_dim_dates_day_dm_simple'
+ORDER BY log_dts DESC; 
+
+SELECT* FROM bl_dm.dim_dates_day;
+
