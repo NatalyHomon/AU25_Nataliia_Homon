@@ -1123,3 +1123,4 @@ ORDER BY log_dts DESC;
 
 SELECT* FROM bl_dm.dim_dates_day;
 
+
