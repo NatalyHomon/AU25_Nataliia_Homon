@@ -424,11 +424,36 @@ HAVING COUNT(*) > 1;
 SELECT* FROM bl_3nf.ce_transactions;
 SELECT COUNT(*) FROM bl_3nf.ce_transactions;
 
+--To verify completeness of the ETL load from the Source Area (SA) to the 3NF layer by identifying business keys (transactions) that exist in SA but are missing in the target ce_transactions table.
+WITH sa_bk AS (
+  SELECT COALESCE(web_order_id,'n. a.') AS txn_src_id,
+         'sa_sales_online' AS source_system,
+         'src_sales_online' AS source_entity
+  FROM sa_sales_online.src_sales_online
+  WHERE web_order_id IS NOT NULL
 
+  UNION
+
+  SELECT COALESCE(ckout,'n. a.') AS txn_src_id,
+         'sa_sales_pos' AS source_system,
+         'src_sales_pos' AS source_entity
+  FROM sa_sales_pos.src_sales_pos
+  WHERE ckout IS NOT NULL
+)
+SELECT s.*
+FROM sa_bk s
+LEFT JOIN bl_3nf.ce_transactions t
+  ON t.txn_src_id = s.txn_src_id
+ AND t.source_system = s.source_system
+ AND t.source_entity = s.source_entity
+WHERE t.txn_id IS NULL;
 -- =========================================================
 --  FCT_SALES_DAILY
 -- =========================================================
 CREATE UNIQUE INDEX IF NOT EXISTS ux_fct_sales_daily_bk ON bl_dm.fct_sales_daily (date_id, txn_src_id);
+
+CREATE TABLE IF NOT EXISTS bl_dm.fct_sales_daily_default
+PARTITION OF bl_dm.fct_sales_daily DEFAULT;
 
 CREATE OR REPLACE PROCEDURE bl_cl.pr_manage_fct_sales_daily_partitions(p_months_back int DEFAULT 3)
 LANGUAGE plpgsql
@@ -449,6 +474,9 @@ DECLARE
 BEGIN
   CALL bl_cl.pr_log_write(v_proc,'START',0,'Manage partitions for fct_sales_daily (archive old to DEFAULT)',NULL,'bl_dm','fct_sales_daily',v_run_id);
 
+--0) Ensure DEFAULT partition exists (catch-all for dates outside created partitions)
+  EXECUTE 'CREATE TABLE IF NOT EXISTS bl_dm.fct_sales_daily_default
+           PARTITION OF bl_dm.fct_sales_daily DEFAULT';
 
   -- 1) Create rolling window partitions (+ next month)
   v_m := v_start_month;
@@ -479,7 +507,7 @@ BEGIN
     IF v_part_name ~ '^fct_sales_daily_\d{6}$'
        AND to_date(substring(v_part_name from '\d{6}$'),'YYYYMM') < v_start_month
     THEN
-      -- detach стару партицію
+      -- detach old partition
       EXECUTE format('ALTER TABLE bl_dm.fct_sales_daily DETACH PARTITION bl_dm.%I;', v_part_name);
 
       CALL bl_cl.pr_log_write(
@@ -505,178 +533,181 @@ CREATE OR REPLACE PROCEDURE bl_cl.pr_load_fct_sales_daily_dm(p_months_back int D
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_proc      text := 'bl_cl.pr_load_fct_sales_daily_dm';
-  v_run_id    uuid := gen_random_uuid();
-  v_rows      bigint := 0;
-  v_rows_step bigint := 0;
+  v_proc   text := 'bl_cl.pr_load_fct_sales_daily_dm';
+  v_run_id uuid := gen_random_uuid();
+  v_rows   bigint := 0;
 
-  v_start_month date := date_trunc('month', current_date)::date - (p_months_back - 1) * interval '1 month';
-  v_end_month   date := date_trunc('month', current_date)::date;
-  v_m           date;
-
-  v_part_name text;
+  v_from_date date := (date_trunc('month', current_date)::date - (p_months_back - 1) * interval '1 month')::date;
+  v_to_date   date := (date_trunc('month', current_date)::date + interval '1 month')::date; -- до кінця поточного місяця
 BEGIN
-  CALL bl_cl.pr_log_write(v_proc,'START',0,'Start load fct_sales_daily rolling window ',NULL,'bl_dm','fct_sales_daily',v_run_id);
+  CALL bl_cl.pr_log_write(v_proc,'START',0,'Start load fct_sales_daily (rolling window)',NULL,'bl_dm','fct_sales_daily',v_run_id);
 
-  -- ensure partitions exist + archive old
+  -- 1) ensure partitions exist + DETACH old (DDL, dynamic inside manage proc)
   CALL bl_cl.pr_manage_fct_sales_daily_partitions(p_months_back);
 
-  -- ensure unknown date exists
+  -- 2) ensure unknown date exists
   INSERT INTO bl_dm.dim_dates_day(date_id, day, day_of_week, day_name, week, week_of_year, month, month_name, quarter, year, is_weekend)
   VALUES (-1, -1, -1, 'n. a.', -1, -1, -1, 'n. a.', -1, -1, false)
   ON CONFLICT (date_id) DO NOTHING;
 
-  v_m := v_start_month;
+  -- 3) UPSERT into parent table (Postgres routes rows into partitions automatically)
+  INSERT INTO bl_dm.fct_sales_daily AS tgt (
+    date_id, customer_id, product_id, store_id, employee_id, terminal_id, promotion_id,
+    delivery_provider_id, junk_context_id, promised_delivery_date_id,
+    txn_src_id, txn_ts_src, tracking_id_src_id,
+    qty, unit_price_amt, discount_amt, tax_amt, shipping_fee_amt, sales_amt, cost_amt, gross_profit_amt,
+    loyalty_points_earned, customer_rating, calculated_gross_margin_pct, calculated_net_sales_amt
+  )
+  SELECT
+    to_char(trx.txn_ts::date,'YYYYMMDD')::int AS date_id,
 
-  WHILE v_m <= v_end_month LOOP
-    v_part_name := format('fct_sales_daily_%s', to_char(v_m,'YYYYMM'));
-    RAISE NOTICE 'Upserting partition %, month %', v_part_name, v_m;
+    COALESCE(dcus.customer_id, -1)  AS customer_id,
+    COALESCE(dprd.product_id,  -1)  AS product_id,
+    COALESCE(dstr.store_id,    -1)  AS store_id,
+    COALESCE(demp.employee_id, -1)  AS employee_id,
+    COALESCE(dter.terminal_id, -1)  AS terminal_id,
+    COALESCE(dpro.promotion_id,-1)  AS promotion_id,
 
-    EXECUTE format($sql$
-      INSERT INTO bl_dm.%I (
-        date_id, customer_id, product_id, store_id, employee_id, terminal_id, promotion_id,
-        delivery_provider_id, junk_context_id, promised_delivery_date_id,
-        txn_src_id, txn_ts_src, tracking_id_src_id,
-        qty, unit_price_amt, discount_amt, tax_amt, shipping_fee_amt, sales_amt, cost_amt, gross_profit_amt,
-        loyalty_points_earned, customer_rating, calculated_gross_margin_pct, calculated_net_sales_amt
-      )
-      SELECT
-        to_char(trx.txn_ts::date,'YYYYMMDD')::int AS date_id,
+    COALESCE(ddpr.delivery_provider_id, -1) AS delivery_provider_id,
+    COALESCE(djnk.junk_context_id, -1)      AS junk_context_id,
 
-        COALESCE(dcus.customer_id, -1)  AS customer_id,
-        COALESCE(dprd.product_id,  -1)  AS product_id,
-        COALESCE(dstr.store_id,    -1)  AS store_id,
-        COALESCE(demp.employee_id, -1)  AS employee_id,
-        COALESCE(dter.terminal_id, -1)  AS terminal_id,
-        COALESCE(dpro.promotion_id,-1)  AS promotion_id,
+    COALESCE(to_char(trx.promised_delivery_dt,'YYYYMMDD')::int, -1) AS promised_delivery_date_id,
 
-        COALESCE(ddpr.delivery_provider_id, -1) AS delivery_provider_id,
-        COALESCE(djnk.junk_context_id, -1)      AS junk_context_id,
+    trx.txn_src_id,
+    trx.txn_ts      AS txn_ts_src,
+    trx.tracking_id AS tracking_id_src_id,
 
-        COALESCE(to_char(trx.promised_delivery_dt,'YYYYMMDD')::int, -1) AS promised_delivery_date_id,
+    trx.qty,
+    trx.unit_price_amt,
+    trx.discount_amt,
+    trx.tax_amt,
+    trx.shipping_fee_amt,
+    trx.sales_amt,
+    trx.cost_amt,
+    trx.gross_profit_amt,
+    trx.loyalty_points_earned,
+    trx.customer_rating,
 
-        trx.txn_src_id,
-        trx.txn_ts       AS txn_ts_src,
-        trx.tracking_id  AS tracking_id_src_id,
+    CASE
+      WHEN trx.sales_amt IS NULL OR trx.sales_amt = 0 THEN NULL
+      ELSE ROUND((trx.gross_profit_amt / trx.sales_amt) * 100.0, 2)
+    END AS calculated_gross_margin_pct,
 
-        trx.qty,
-        trx.unit_price_amt,
-        trx.discount_amt,
-        trx.tax_amt,
-        trx.shipping_fee_amt,
-        trx.sales_amt,
-        trx.cost_amt,
-        trx.gross_profit_amt,
-        trx.loyalty_points_earned,
-        trx.customer_rating,
+    (trx.sales_amt - trx.discount_amt) AS calculated_net_sales_amt
 
-        CASE
-          WHEN trx.sales_amt IS NULL OR trx.sales_amt = 0 THEN NULL
-          ELSE ROUND((trx.gross_profit_amt / trx.sales_amt) * 100.0, 2)
-        END AS calculated_gross_margin_pct,
+  FROM bl_3nf.ce_transactions trx
 
-        (trx.sales_amt - trx.discount_amt) AS calculated_net_sales_amt
+  -- ===== 3NF -> DM key mapping =====
+  LEFT JOIN bl_3nf.ce_products p3 ON p3.product_id = trx.product_id
+  LEFT JOIN bl_dm.dim_products dprd
+    ON dprd.source_id = p3.product_id::varchar  
 
-      FROM bl_3nf.ce_transactions trx
+  LEFT JOIN bl_3nf.ce_promotions pr3 ON pr3.promotion_id = trx.promotion_id
+  LEFT JOIN bl_dm.dim_promotions dpro
+    ON dpro.source_id = pr3.promotion_id::varchar
 
-      LEFT JOIN bl_3nf.ce_products p3 ON p3.product_id = trx.product_id
-      LEFT JOIN bl_dm.dim_products dprd
-        ON dprd.source_system = p3.source_system AND dprd.source_entity = p3.source_entity AND dprd.source_id = p3.source_id
+  LEFT JOIN bl_3nf.ce_stores s3 ON s3.store_id = trx.store_id
+  LEFT JOIN bl_dm.dim_stores dstr
+    ON dstr.source_id = s3.store_id::varchar
 
-      LEFT JOIN bl_3nf.ce_promotions pr3 ON pr3.promotion_id = trx.promotion_id
-      LEFT JOIN bl_dm.dim_promotions dpro
-        ON dpro.source_system = pr3.source_system AND dpro.source_entity = pr3.source_entity AND dpro.source_id = pr3.source_id
+  LEFT JOIN bl_3nf.ce_terminals t3 ON t3.terminal_id = trx.terminal_id
+  LEFT JOIN bl_dm.dim_terminals dter
+    ON dter.source_id = t3.terminal_id::varchar
 
-      LEFT JOIN bl_3nf.ce_stores s3 ON s3.store_id = trx.store_id
-      LEFT JOIN bl_dm.dim_stores dstr
-        ON dstr.source_system = s3.source_system AND dstr.source_entity = s3.source_entity AND dstr.source_id = s3.source_id
+  LEFT JOIN bl_3nf.ce_employees e3 ON e3.employee_id = trx.employee_id
+  LEFT JOIN bl_dm.dim_employees demp
+    ON demp.source_id = e3.employee_id::varchar
 
-      LEFT JOIN bl_3nf.ce_terminals t3 ON t3.terminal_id = trx.terminal_id
-      LEFT JOIN bl_dm.dim_terminals dter
-        ON dter.source_system = t3.source_system AND dter.source_entity = t3.source_entity AND dter.source_id = t3.source_id
+  LEFT JOIN bl_3nf.ce_customers_scd c3
+    ON c3.customer_id = trx.customer_id
+   AND c3.is_active = true
+   AND c3.end_dt = date '9999-12-31'
+  LEFT JOIN bl_dm.dim_customers_scd dcus
+    ON dcus.source_id = c3.customer_id::varchar
+   AND dcus.is_active = true
+   AND dcus.end_dt = date '9999-12-31'
 
-      LEFT JOIN bl_3nf.ce_employees e3 ON e3.employee_id = trx.employee_id
-      LEFT JOIN bl_dm.dim_employees demp
-        ON demp.source_system = e3.source_system AND demp.source_entity = e3.source_entity AND demp.source_id = e3.source_id
+  LEFT JOIN bl_3nf.ce_delivery_providers dp3 ON dp3.delivery_provider_id = trx.delivery_provider_id
+  LEFT JOIN bl_dm.dim_delivery_providers ddpr
+    ON ddpr.source_id = dp3.delivery_provider_id::varchar
 
-      LEFT JOIN bl_3nf.ce_customers_scd c3
-        ON c3.customer_id = trx.customer_id AND c3.is_active = true AND c3.end_dt = date '9999-12-31'
-      LEFT JOIN bl_dm.dim_customers_scd dcus
-        ON dcus.source_system = c3.source_system AND dcus.source_entity = c3.source_entity AND dcus.source_id = c3.source_id
-       AND dcus.is_active = true AND dcus.end_dt = date '9999-12-31'
+  -- JUNK
+  LEFT JOIN bl_3nf.ce_sales_channels sch3 ON sch3.sales_channel_id = trx.sales_channel_id
+  LEFT JOIN bl_3nf.ce_payment_methods pm3 ON pm3.payment_method_id = trx.payment_method_id
+  LEFT JOIN bl_3nf.ce_card_types ct3 ON ct3.card_type_id = trx.card_type_id
+  LEFT JOIN bl_3nf.ce_receipt_types rt3 ON rt3.receipt_type_id = trx.receipt_type_id
+  LEFT JOIN bl_3nf.ce_payment_gateways pg3 ON pg3.payment_gateway_id = trx.payment_gateway_id
+  LEFT JOIN bl_3nf.ce_order_statuses os3 ON os3.order_status_id = trx.order_status_id
+  LEFT JOIN bl_3nf.ce_shifts sh3 ON sh3.shift_id = trx.shift_id
 
-      LEFT JOIN bl_3nf.ce_delivery_providers dp3 ON dp3.delivery_provider_id = trx.delivery_provider_id
-      LEFT JOIN bl_dm.dim_delivery_providers ddpr
-        ON ddpr.source_system = dp3.source_system AND ddpr.source_entity = dp3.source_entity AND ddpr.source_id = dp3.source_id
+  LEFT JOIN bl_dm.dim_junk_context djnk
+    ON djnk.sales_channel    = sch3.sales_channel_name
+   AND djnk.payment_method  = pm3.payment_method_name
+   AND djnk.card_type       = ct3.card_type_name
+   AND djnk.receipt_type    = rt3.receipt_type_name
+   AND djnk.payment_gateway = pg3.payment_gateway_name
+   AND djnk.order_status    = os3.order_status_name
+   AND djnk.shift_name      = sh3.shift_src_id  
+   AND djnk.device_type_id  = trx.device_type_id
 
-      LEFT JOIN bl_3nf.ce_sales_channels sch3 ON sch3.sales_channel_id = trx.sales_channel_id
-      LEFT JOIN bl_3nf.ce_payment_methods pm3 ON pm3.payment_method_id = trx.payment_method_id
-      LEFT JOIN bl_3nf.ce_card_types ct3 ON ct3.card_type_id = trx.card_type_id
-      LEFT JOIN bl_3nf.ce_receipt_types rt3 ON rt3.receipt_type_id = trx.receipt_type_id
-      LEFT JOIN bl_3nf.ce_payment_gateways pg3 ON pg3.payment_gateway_id = trx.payment_gateway_id
-      LEFT JOIN bl_3nf.ce_order_statuses os3 ON os3.order_status_id = trx.order_status_id
-      LEFT JOIN bl_3nf.ce_shifts sh3 ON sh3.shift_id = trx.shift_id
+  WHERE trx.txn_ts >= v_from_date
+    AND trx.txn_ts <  v_to_date
 
-      LEFT JOIN bl_dm.dim_junk_context djnk
-        ON djnk.sales_channel     = sch3.sales_channel_name
-       AND djnk.payment_method   = pm3.payment_method_name
-       AND djnk.card_type        = ct3.card_type_name
-       AND djnk.receipt_type     = rt3.receipt_type_name
-       AND djnk.payment_gateway  = pg3.payment_gateway_name
-       AND djnk.order_status     = os3.order_status_name
-       AND djnk.shift_name       = sh3.shift_src_id
-       AND djnk.device_type_id   = trx.device_type_id
-       AND djnk.source_system    = trx.source_system
-       AND djnk.source_entity    = trx.source_entity
+  ON CONFLICT (date_id, txn_src_id)
+  DO UPDATE SET
+    customer_id               = EXCLUDED.customer_id,
+    product_id                = EXCLUDED.product_id,
+    store_id                  = EXCLUDED.store_id,
+    employee_id               = EXCLUDED.employee_id,
+    terminal_id               = EXCLUDED.terminal_id,
+    promotion_id              = EXCLUDED.promotion_id,
+    delivery_provider_id      = EXCLUDED.delivery_provider_id,
+    junk_context_id           = EXCLUDED.junk_context_id,
+    promised_delivery_date_id = EXCLUDED.promised_delivery_date_id,
+    txn_ts_src                = EXCLUDED.txn_ts_src,
+    tracking_id_src_id        = EXCLUDED.tracking_id_src_id,
+    qty                       = EXCLUDED.qty,
+    unit_price_amt            = EXCLUDED.unit_price_amt,
+    discount_amt              = EXCLUDED.discount_amt,
+    tax_amt                   = EXCLUDED.tax_amt,
+    shipping_fee_amt          = EXCLUDED.shipping_fee_amt,
+    sales_amt                 = EXCLUDED.sales_amt,
+    cost_amt                  = EXCLUDED.cost_amt,
+    gross_profit_amt          = EXCLUDED.gross_profit_amt,
+    loyalty_points_earned     = EXCLUDED.loyalty_points_earned,
+    customer_rating           = EXCLUDED.customer_rating,
+    calculated_gross_margin_pct = EXCLUDED.calculated_gross_margin_pct,
+    calculated_net_sales_amt  = EXCLUDED.calculated_net_sales_amt
+  WHERE
+    (tgt.customer_id, tgt.product_id, tgt.store_id, tgt.employee_id, tgt.terminal_id,
+     tgt.promotion_id, tgt.delivery_provider_id, tgt.junk_context_id, tgt.promised_delivery_date_id,
+     tgt.txn_ts_src, tgt.tracking_id_src_id,
+     tgt.qty, tgt.unit_price_amt, tgt.discount_amt, tgt.tax_amt, tgt.shipping_fee_amt,
+     tgt.sales_amt, tgt.cost_amt, tgt.gross_profit_amt,
+     tgt.loyalty_points_earned, tgt.customer_rating,
+     tgt.calculated_gross_margin_pct, tgt.calculated_net_sales_amt)
+    IS DISTINCT FROM
+    (EXCLUDED.customer_id, EXCLUDED.product_id, EXCLUDED.store_id, EXCLUDED.employee_id, EXCLUDED.terminal_id,
+     EXCLUDED.promotion_id, EXCLUDED.delivery_provider_id, EXCLUDED.junk_context_id, EXCLUDED.promised_delivery_date_id,
+     EXCLUDED.txn_ts_src, EXCLUDED.tracking_id_src_id,
+     EXCLUDED.qty, EXCLUDED.unit_price_amt, EXCLUDED.discount_amt, EXCLUDED.tax_amt, EXCLUDED.shipping_fee_amt,
+     EXCLUDED.sales_amt, EXCLUDED.cost_amt, EXCLUDED.gross_profit_amt,
+     EXCLUDED.loyalty_points_earned, EXCLUDED.customer_rating,
+     EXCLUDED.calculated_gross_margin_pct, EXCLUDED.calculated_net_sales_amt);
 
-      WHERE trx.txn_ts >= %L::date
-        AND trx.txn_ts <  (%L::date + interval '1 month')
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
 
-      ON CONFLICT (date_id, txn_src_id)
-      DO UPDATE SET
-        customer_id               = EXCLUDED.customer_id,
-        product_id                = EXCLUDED.product_id,
-        store_id                  = EXCLUDED.store_id,
-        employee_id               = EXCLUDED.employee_id,
-        terminal_id               = EXCLUDED.terminal_id,
-        promotion_id              = EXCLUDED.promotion_id,
-        delivery_provider_id      = EXCLUDED.delivery_provider_id,
-        junk_context_id           = EXCLUDED.junk_context_id,
-        promised_delivery_date_id = EXCLUDED.promised_delivery_date_id,
-        txn_ts_src                = EXCLUDED.txn_ts_src,
-        tracking_id_src_id        = EXCLUDED.tracking_id_src_id,
-        qty                       = EXCLUDED.qty,
-        unit_price_amt            = EXCLUDED.unit_price_amt,
-        discount_amt              = EXCLUDED.discount_amt,
-        tax_amt                   = EXCLUDED.tax_amt,
-        shipping_fee_amt          = EXCLUDED.shipping_fee_amt,
-        sales_amt                 = EXCLUDED.sales_amt,
-        cost_amt                  = EXCLUDED.cost_amt,
-        gross_profit_amt          = EXCLUDED.gross_profit_amt,
-        loyalty_points_earned     = EXCLUDED.loyalty_points_earned,
-        customer_rating           = EXCLUDED.customer_rating,
-        calculated_gross_margin_pct = EXCLUDED.calculated_gross_margin_pct,
-        calculated_net_sales_amt  = EXCLUDED.calculated_net_sales_amt;
-    $sql$, v_part_name, v_m::text, v_m::text);
-
-    GET DIAGNOSTICS v_rows_step = ROW_COUNT;
-    v_rows := v_rows + v_rows_step;
-
-    v_m := (v_m + interval '1 month')::date;
-  END LOOP;
-
-  CALL bl_cl.pr_log_write(v_proc,'SUCCESS',v_rows,'DM fct_sales_daily loaded for rolling window ',NULL,'bl_dm','fct_sales_daily',v_run_id);
+  CALL bl_cl.pr_log_write(v_proc,'SUCCESS',v_rows,'DM fct_sales_daily loaded (rolling window)',NULL,'bl_dm','fct_sales_daily',v_run_id);
 
 EXCEPTION WHEN OTHERS THEN
   CALL bl_cl.pr_log_write(v_proc,'ERROR',0,SQLERRM,SQLSTATE,'bl_dm','fct_sales_daily',v_run_id);
-  RETURN;
+  RAISE;
 END;
 $$;
-
 -- =========================================================
 --  TEST QUERIES 
 -- =========================================================
-CALL bl_cl.pr_load_fct_sales_daily_dm();
+CALL bl_cl.pr_load_fct_sales_daily_dm(12);
 
 
 
@@ -692,4 +723,27 @@ HAVING COUNT(*) > 1;
 
 SELECT* FROM bl_dm.fct_sales_daily;
 SELECT COUNT(*) FROM bl_dm.fct_sales_daily;
+
+
+
+WITH bounds AS (
+  SELECT
+    (date_trunc('month', current_date)::date - (3 - 1) * interval '1 month')::date AS from_d,
+    (date_trunc('month', current_date)::date + interval '1 month')::date           AS to_d
+),
+w AS (
+  SELECT
+    to_char(txn_ts::date,'YYYYMMDD')::int AS date_id,
+    txn_src_id
+  FROM bl_3nf.ce_transactions, bounds
+  WHERE txn_ts >= bounds.from_d
+    AND txn_ts <  bounds.to_d
+)
+SELECT w.date_id, w.txn_src_id
+FROM w
+LEFT JOIN bl_dm.fct_sales_daily f
+  ON f.date_id = w.date_id
+ AND f.txn_src_id = w.txn_src_id
+WHERE f.txn_src_id IS NULL;
+
 
