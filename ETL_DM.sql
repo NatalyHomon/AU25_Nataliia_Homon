@@ -139,15 +139,14 @@ $$;
   -- DIM_PRODUCTS
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_products_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_products_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_products_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
-
-  -- ✅ composite type usage (simple)
+  -- composite type usage 
   v_ctx bl_cl.t_source_ctx;
 BEGIN
   -- init composite object once
@@ -263,11 +262,7 @@ FROM bl_cl.mta_etl_log
 WHERE procedure_name = 'bl_cl.pr_load_dim_products_dm_simple'
 ORDER BY log_dts DESC;
 
-SELECT *
-FROM bl_cl.mta_etl_log
-WHERE procedure_name = 'bl_cl.pr_load_dim_products_dm_simple'
-  AND status = 'WARN'
-ORDER BY log_dts DESC;
+
 
 SELECT* FROM bl_dm.dim_products;
 SELECT COUNT (*) FROM bl_dm.dim_products;
@@ -276,12 +271,12 @@ SELECT COUNT (*) FROM bl_dm.dim_products;
   -- DIM_STORES
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_stores_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_stores_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_stores_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
 
   -- composite type for lineage context
@@ -422,12 +417,12 @@ SELECT* FROM bl_dm.dim_stores;
   -- DIM_TERMINALS (3NF: ce_terminals + ce_terminal_types)
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_terminals_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_terminals_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_terminals_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
   v_ctx bl_cl.t_source_ctx;
 BEGIN
@@ -505,12 +500,12 @@ SELECT* FROM bl_dm.dim_terminals;
   -- DIM_EMPLOYEES (3NF: ce_employees)
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_employees_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_employees_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_employees_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
   v_ctx bl_cl.t_source_ctx;
 BEGIN
@@ -602,12 +597,12 @@ SELECT* FROM bl_dm.dim_employees;
   --DIM_PROMOTIONS (3NF: ce_promotions)
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_promotions_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_promotions_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_promotions_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
   v_ctx bl_cl.t_source_ctx;
 BEGIN
@@ -683,12 +678,12 @@ SELECT* FROM bl_dm.dim_promotions;
   -- DIM_DELIVERY_PROVIDERS (3NF: ce_transactions + providers + types)
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_delivery_providers_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_delivery_providers_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_delivery_providers_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
   v_ctx bl_cl.t_source_ctx;
 BEGIN
@@ -757,12 +752,12 @@ SELECT* FROM bl_dm.dim_delivery_providers;
  -- DIM_JUNK_CONTEXT (3NF: ce_transactions + lookup tables)
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_junk_context_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_junk_context_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_junk_context_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
 BEGIN
   CALL bl_cl.pr_log_write(v_proc,'START',0,'Start load DIM_JUNK_CONTEXT.',NULL,'bl_3nf','ce_transactions',v_run_id);
@@ -825,25 +820,20 @@ BEGIN
   LEFT JOIN bl_3nf.ce_order_statuses os     ON os.order_status_id      = x.order_status_id
   LEFT JOIN bl_3nf.ce_shifts sh             ON sh.shift_id             = x.shift_id
 
-  ON CONFLICT (source_system, source_entity, source_id)
+  ON CONFLICT (
+    sales_channel, payment_method, card_type, receipt_type,
+    payment_gateway, order_status, shift_name, device_type_id
+  )
   DO UPDATE SET
-    sales_channel   = EXCLUDED.sales_channel,
-    payment_method  = EXCLUDED.payment_method,
-    card_type       = EXCLUDED.card_type,
-    receipt_type    = EXCLUDED.receipt_type,
-    payment_gateway = EXCLUDED.payment_gateway,
-    order_status    = EXCLUDED.order_status,
-    shift_name      = EXCLUDED.shift_name,
-    device_type_id  = EXCLUDED.device_type_id
+    
+    source_system = EXCLUDED.source_system,
+    source_entity = EXCLUDED.source_entity,
+    source_id     = EXCLUDED.source_id
   WHERE
-    bl_dm.dim_junk_context.sales_channel   IS DISTINCT FROM EXCLUDED.sales_channel OR
-    bl_dm.dim_junk_context.payment_method  IS DISTINCT FROM EXCLUDED.payment_method OR
-    bl_dm.dim_junk_context.card_type       IS DISTINCT FROM EXCLUDED.card_type OR
-    bl_dm.dim_junk_context.receipt_type    IS DISTINCT FROM EXCLUDED.receipt_type OR
-    bl_dm.dim_junk_context.payment_gateway IS DISTINCT FROM EXCLUDED.payment_gateway OR
-    bl_dm.dim_junk_context.order_status    IS DISTINCT FROM EXCLUDED.order_status OR
-    bl_dm.dim_junk_context.shift_name      IS DISTINCT FROM EXCLUDED.shift_name OR
-    bl_dm.dim_junk_context.device_type_id  IS DISTINCT FROM EXCLUDED.device_type_id;
+    bl_dm.dim_junk_context.source_system IS DISTINCT FROM EXCLUDED.source_system OR
+    bl_dm.dim_junk_context.source_entity IS DISTINCT FROM EXCLUDED.source_entity OR
+    bl_dm.dim_junk_context.source_id     IS DISTINCT FROM EXCLUDED.source_id;
+
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
@@ -855,6 +845,12 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+ALTER TABLE bl_dm.dim_junk_context
+ADD CONSTRAINT uq_dim_junk_context_nk
+UNIQUE (
+  sales_channel, payment_method, card_type, receipt_type,
+  payment_gateway, order_status, shift_name, device_type_id
+);
 -------------------------------------------------------------------
   -- CHECK
   -------------------------------------------------------------------
@@ -877,12 +873,12 @@ SELECT* FROM bl_dm.dim_junk_context;
   -- DIM_CUSTOMERS_SCD (3NF: ce_customers_scd)
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_customers_scd_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_customers_scd_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_customers_scd_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
   v_ctx bl_cl.t_source_ctx;
 BEGIN
@@ -994,12 +990,12 @@ ORDER BY cus.customer_src_id;
   --DIM_DATES_DAY
   -------------------------------------------------------------------
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_dates_day_dm_simple()
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_dates_day_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_proc   text := 'bl_cl.pr_load_dim_dates_day_dm_simple';
-  v_run_id uuid := gen_random_uuid();
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
   v_rows   bigint := 0;
 
   v_min_date date;
