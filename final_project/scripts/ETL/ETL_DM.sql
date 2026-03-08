@@ -751,6 +751,12 @@ SELECT* FROM bl_dm.dim_delivery_providers;
 -------------------------------------------------------------------
  -- DIM_JUNK_CONTEXT (3NF: ce_transactions + lookup tables)
   -------------------------------------------------------------------
+ALTER TABLE bl_dm.dim_junk_context
+ADD CONSTRAINT uq_dim_junk_context_nk
+UNIQUE (
+  sales_channel, payment_method, card_type, receipt_type,
+  payment_gateway, order_status, shift_name, device_type_id
+);
 
 CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_junk_context_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
@@ -824,15 +830,7 @@ BEGIN
     sales_channel, payment_method, card_type, receipt_type,
     payment_gateway, order_status, shift_name, device_type_id
   )
-  DO UPDATE SET
-    
-    source_system = EXCLUDED.source_system,
-    source_entity = EXCLUDED.source_entity,
-    source_id     = EXCLUDED.source_id
-  WHERE
-    bl_dm.dim_junk_context.source_system IS DISTINCT FROM EXCLUDED.source_system OR
-    bl_dm.dim_junk_context.source_entity IS DISTINCT FROM EXCLUDED.source_entity OR
-    bl_dm.dim_junk_context.source_id     IS DISTINCT FROM EXCLUDED.source_id;
+  DO nothing;
 
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -845,12 +843,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
-ALTER TABLE bl_dm.dim_junk_context
-ADD CONSTRAINT uq_dim_junk_context_nk
-UNIQUE (
-  sales_channel, payment_method, card_type, receipt_type,
-  payment_gateway, order_status, shift_name, device_type_id
-);
+
 -------------------------------------------------------------------
   -- CHECK
   -------------------------------------------------------------------
@@ -872,7 +865,7 @@ SELECT* FROM bl_dm.dim_junk_context;
 -------------------------------------------------------------------
   -- DIM_CUSTOMERS_SCD (3NF: ce_customers_scd)
   -------------------------------------------------------------------
-
+/*
 CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_customers_scd_dm_simple(p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
 AS $$
@@ -884,7 +877,11 @@ DECLARE
 BEGIN
   v_ctx := ROW('bl_3nf','ce_customers_scd','BL_3NF','CE_CUSTOMERS_SCD')::bl_cl.t_source_ctx;
 
-  CALL bl_cl.pr_log_write(v_proc,'START',0,'Start load DIM_CUSTOMERS_SCD.',NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id);
+  CALL bl_cl.pr_log_write(
+    v_proc,'START',0,
+    'Start load DIM_CUSTOMERS_SCD from 3NF CE_CUSTOMERS_SCD (timestamp SCD2).',
+    NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
 
   -- NA validation: email (ignore customer_id=-1)
   CALL bl_cl.pr_validate_na_only(
@@ -904,8 +901,8 @@ BEGIN
     phone,
     customer_segment,
     gender,
-    start_dt,
-    end_dt,
+    start_ts,
+    end_ts,
     is_active,
     source_system,
     source_entity,
@@ -918,12 +915,12 @@ BEGIN
     c.phone,
     c.customer_segment,
     c.gender,
-    c.start_dt,
-    c.end_dt,
+    c.start_ts,
+    c.end_ts,
     c.is_active,
     v_ctx.dm_layer::varchar(30),
     v_ctx.dm_entity::varchar(60),
-    c.customer_id::varchar(100)
+    c.customer_id::varchar(100)           -- version id from 3NF
   FROM bl_3nf.ce_customers_scd c
   WHERE c.customer_id <> -1
 
@@ -935,8 +932,8 @@ BEGIN
     phone              = EXCLUDED.phone,
     customer_segment   = EXCLUDED.customer_segment,
     gender             = EXCLUDED.gender,
-    start_dt           = EXCLUDED.start_dt,
-    end_dt             = EXCLUDED.end_dt,
+    start_ts           = EXCLUDED.start_ts,
+    end_ts             = EXCLUDED.end_ts,
     is_active          = EXCLUDED.is_active
   WHERE
     bl_dm.dim_customers_scd.customer_src_id  IS DISTINCT FROM EXCLUDED.customer_src_id OR
@@ -945,13 +942,169 @@ BEGIN
     bl_dm.dim_customers_scd.phone            IS DISTINCT FROM EXCLUDED.phone OR
     bl_dm.dim_customers_scd.customer_segment IS DISTINCT FROM EXCLUDED.customer_segment OR
     bl_dm.dim_customers_scd.gender           IS DISTINCT FROM EXCLUDED.gender OR
-    bl_dm.dim_customers_scd.start_dt         IS DISTINCT FROM EXCLUDED.start_dt OR
-    bl_dm.dim_customers_scd.end_dt           IS DISTINCT FROM EXCLUDED.end_dt OR
+    bl_dm.dim_customers_scd.start_ts         IS DISTINCT FROM EXCLUDED.start_ts OR
+    bl_dm.dim_customers_scd.end_ts           IS DISTINCT FROM EXCLUDED.end_ts OR
     bl_dm.dim_customers_scd.is_active        IS DISTINCT FROM EXCLUDED.is_active;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
 
-  CALL bl_cl.pr_log_write(v_proc,'SUCCESS',v_rows,'DIM_CUSTOMERS_SCD loaded successfully.',NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id);
+  CALL bl_cl.pr_log_write(
+    v_proc,'SUCCESS',v_rows,
+    'DIM_CUSTOMERS_SCD loaded successfully from 3NF.',
+    NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
+
+EXCEPTION WHEN OTHERS THEN
+  CALL bl_cl.pr_log_write(v_proc,'ERROR',0,SQLERRM,SQLSTATE, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id);
+  RAISE;
+END;
+$$;
+*/
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_dim_customers_scd_dm_simple(p_run_id uuid DEFAULT NULL)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_proc   text := 'bl_cl.pr_load_dim_customers_scd_dm_simple';
+  v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
+  v_rows   bigint := 0;
+  v_ctx bl_cl.t_source_ctx;
+BEGIN
+  v_ctx := ROW('bl_3nf','ce_customers_scd','BL_3NF','CE_CUSTOMERS_SCD')::bl_cl.t_source_ctx;
+
+  CALL bl_cl.pr_log_write(
+    v_proc,'START',0,
+    'Start load DIM_CUSTOMERS_SCD from 3NF CE_CUSTOMERS_SCD (single active row per customer).',
+    NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
+
+  CALL bl_cl.pr_validate_na_only(
+    p_proc_name        => v_proc,
+    p_run_id           => v_run_id,
+    p_table            => 'bl_3nf.ce_customers_scd'::regclass,
+    p_column           => 'email',
+    p_pk_column        => 'customer_id',
+    p_limit_examples   => 5,
+    p_default_pk_value => '-1'
+  );
+
+  WITH src AS (
+    SELECT
+      c.customer_id,
+      c.customer_src_id,
+      c.age_grp AS age_group,
+      c.email,
+      c.phone,
+      c.customer_segment,
+      c.gender,
+      c.start_ts,
+      c.end_ts,
+      c.source_system,
+      c.source_entity,
+      c.is_active,
+      CASE
+        WHEN c.source_system = 'sa_sales_online' THEN 1
+        WHEN c.source_system = 'sa_sales_pos'    THEN 2
+        ELSE 99
+      END AS src_priority
+    FROM bl_3nf.ce_customers_scd c
+    WHERE c.customer_id <> -1
+  ),
+
+  
+  canon_base AS (
+    SELECT *
+    FROM (
+      SELECT
+        s.*,
+        row_number() OVER (
+          PARTITION BY s.customer_src_id, s.start_ts
+          ORDER BY s.src_priority, s.customer_id DESC
+        ) AS rn
+      FROM src s
+    ) x
+    WHERE x.rn = 1
+  ),
+
+  canon_hist AS (
+    SELECT
+      customer_id,
+      customer_src_id,
+      age_group,
+      email,
+      phone,
+      customer_segment,
+      gender,
+      start_ts,
+      COALESCE(
+        lead(start_ts) OVER (
+          PARTITION BY customer_src_id
+          ORDER BY start_ts
+        ),
+        'infinity'::timestamp
+      ) AS end_ts,
+      source_system,
+      source_entity
+    FROM canon_base
+  )
+
+  INSERT INTO bl_dm.dim_customers_scd (
+    customer_src_id,
+    age_group,
+    email,
+    phone,
+    customer_segment,
+    gender,
+    start_ts,
+    end_ts,
+    is_active,
+    source_system,
+    source_entity,
+    source_id
+  )
+  SELECT
+    h.customer_src_id,
+    h.age_group,
+    h.email,
+    h.phone,
+    h.customer_segment,
+    h.gender,
+    h.start_ts,
+    h.end_ts,
+    (h.end_ts = 'infinity'::timestamp) AS is_active,
+    v_ctx.dm_layer::varchar(30),
+    v_ctx.dm_entity::varchar(60),
+    h.customer_id::varchar(100)
+  FROM canon_hist h
+
+  ON CONFLICT (source_system, source_entity, source_id)
+  DO UPDATE SET
+    customer_src_id    = EXCLUDED.customer_src_id,
+    age_group          = EXCLUDED.age_group,
+    email              = EXCLUDED.email,
+    phone              = EXCLUDED.phone,
+    customer_segment   = EXCLUDED.customer_segment,
+    gender             = EXCLUDED.gender,
+    start_ts           = EXCLUDED.start_ts,
+    end_ts             = EXCLUDED.end_ts,
+    is_active          = EXCLUDED.is_active
+  WHERE
+    bl_dm.dim_customers_scd.customer_src_id  IS DISTINCT FROM EXCLUDED.customer_src_id OR
+    bl_dm.dim_customers_scd.age_group        IS DISTINCT FROM EXCLUDED.age_group OR
+    bl_dm.dim_customers_scd.email            IS DISTINCT FROM EXCLUDED.email OR
+    bl_dm.dim_customers_scd.phone            IS DISTINCT FROM EXCLUDED.phone OR
+    bl_dm.dim_customers_scd.customer_segment IS DISTINCT FROM EXCLUDED.customer_segment OR
+    bl_dm.dim_customers_scd.gender           IS DISTINCT FROM EXCLUDED.gender OR
+    bl_dm.dim_customers_scd.start_ts         IS DISTINCT FROM EXCLUDED.start_ts OR
+    bl_dm.dim_customers_scd.end_ts           IS DISTINCT FROM EXCLUDED.end_ts OR
+    bl_dm.dim_customers_scd.is_active        IS DISTINCT FROM EXCLUDED.is_active;
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+  CALL bl_cl.pr_log_write(
+    v_proc,'SUCCESS',v_rows,
+    'DIM_CUSTOMERS_SCD loaded successfully from 3NF.',
+    NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
+  );
 
 EXCEPTION WHEN OTHERS THEN
   CALL bl_cl.pr_log_write(v_proc,'ERROR',0,SQLERRM,SQLSTATE, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id);
@@ -959,7 +1112,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--------------------------------------------------------------------
+----------------------------------------------------------------
   -- CHECK
   -------------------------------------------------------------------
 
@@ -977,7 +1130,7 @@ ORDER BY log_dts DESC;
 
 SELECT* FROM bl_dm.dim_customers_scd;
 
-SELECT cus.customer_src_id, cus.email, cus.phone, cus.start_dt, cus.end_dt, cus.is_active, cus.source_system, cus.source_entity, cus.source_id
+SELECT cus.customer_src_id, cus.email, cus.phone, cus.start_ts, cus.end_ts, cus.is_active, cus.source_system, cus.source_entity, cus.source_id
 FROM bl_dm.dim_customers_scd cus
 WHERE cus.customer_src_id IN(
 SELECT cus.customer_src_id
@@ -1015,10 +1168,21 @@ BEGIN
     NULL, v_ctx.src_layer_3nf, v_ctx.src_entity_3nf, v_run_id
   );
 
-	SELECT MIN(txn_ts::date), MAX(txn_ts::date)
+
+		WITH all_dates AS (
+	  SELECT txn_ts::date AS d
+	  FROM bl_3nf.ce_transactions
+	  WHERE txn_ts IS NOT NULL
+	
+	  UNION ALL
+	
+	  SELECT promised_delivery_dt::date
+	  FROM bl_3nf.ce_transactions
+	  WHERE promised_delivery_dt IS NOT NULL
+	)
+	SELECT MIN(d), MAX(d)
 	INTO v_min_date, v_max_date
-	FROM bl_3nf.ce_transactions
-	WHERE txn_ts IS NOT NULL;
+	FROM all_dates;
 
   -- if there is no transactions in the 3nf
  IF v_min_date IS NULL OR v_max_date IS NULL THEN
@@ -1030,8 +1194,8 @@ BEGIN
   END IF;
 
   WITH calendar AS (
-    SELECT gs::date AS d
-    FROM generate_series(v_min_date, v_max_date, interval '1 day') gs
+    SELECT (v_min_date + gs) AS d
+    FROM generate_series(0, v_max_date - v_min_date) AS gs
   ),
   src AS (
     SELECT
@@ -1107,6 +1271,11 @@ $$;
 
 CALL bl_cl.pr_load_dim_dates_day_dm_simple();
 
+SELECT max(promised_delivery_dt::date) 
+FROM bl_3nf.ce_transactions;
+
+SELECT max(date_id) 
+FROM bl_dm.dim_dates_day;
 
 SELECT log_dts,
        procedure_name,
@@ -1117,6 +1286,8 @@ FROM bl_cl.mta_etl_log
 WHERE procedure_name = 'bl_cl.pr_load_dim_dates_day_dm_simple'
 ORDER BY log_dts DESC; 
 
-SELECT* FROM bl_dm.dim_dates_day;
+SELECT* FROM bl_dm.dim_dates_day ORDER BY 1 desc;
 
-
+SELECT *
+FROM bl_dm.dim_dates_day
+WHERE date_id = 20260216;

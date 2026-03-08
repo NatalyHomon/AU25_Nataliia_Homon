@@ -572,3 +572,8 @@ FROM sa_sales_pos.src_sales_pos
 GROUP BY ckout, product_sku
 HAVING COUNT(*) > 1;
 
+CREATE INDEX IF NOT EXISTS ix_sa_online_load_dts
+ON sa_sales_online.src_sales_online (load_dts);
+
+CREATE INDEX IF NOT EXISTS ix_sa_pos_load_dts
+ON sa_sales_pos.src_sales_pos (load_dts);

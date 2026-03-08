@@ -45,3 +45,7 @@ BEGIN
         );
     END LOOP;
 END $$;
+
+TRUNCATE sa_sales_online.src_sales_online RESTART IDENTITY CASCADE;
+TRUNCATE sa_sales_pos.src_sales_pos RESTART IDENTITY CASCADE;
+TRUNCATE bl_cl.mta_load_control;

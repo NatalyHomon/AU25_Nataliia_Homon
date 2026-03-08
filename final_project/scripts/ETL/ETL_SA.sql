@@ -392,7 +392,7 @@ $$;
 CALL bl_cl.prc_load_sa_sales_online_src('src_sales_online.csv');
 CALL bl_cl.prc_load_sa_sales_pos_src('src_sales_pos.csv');
 
-SELECT * FROM sa_sales_pos.src_sales_pos;
+
 SELECT * FROM sa_sales_online.src_sales_online;
 
 SELECT * FROM sa_sales_online.src_sales_online cus

@@ -123,5 +123,6 @@ WHERE procedure_name='bl_cl.pr_load_map_countries'
 ORDER BY log_id DESC;
 
 SELECT* FROM bl_cl.t_map_countries; 
+TRUNCATE bl_cl.t_map_countries RESTART IDENTITY CASCADE;
 
 

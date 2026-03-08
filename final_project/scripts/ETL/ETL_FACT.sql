@@ -123,11 +123,11 @@ BEGIN
       'n. a.'                                               AS carrier_name,
       'n. a.'                                               AS delivery_type_name,
 
-      'n. a.'                                               AS delivery_postal_code,
-      'n. a.'                                               AS delivery_address_line1,
-      'n. a.'                                               AS city_name,
-      'n. a.'                                               AS region_name,
-      'n. a.'                                               AS country_name,
+     'n. a.'                                              AS delivery_postal_code,
+     'n. a.'                                             AS delivery_address_line1,
+      COALESCE(spo.city, 'n. a.')                                               AS city_name,
+      COALESCE(spo.region, 'n. a.')                                                AS region_name,
+      COALESCE(spo.country, 'n. a.')                                                 AS country_name,
 
       'n. a.'                                               AS fulfillment_center_src_id,
       'n. a.'                                               AS fulfillment_city_name,
@@ -224,7 +224,7 @@ map AS (
    AND cus.source_system   = src.source_system
    AND cus.source_entity   = src.source_entity
    AND cus.is_active       = TRUE
-   AND cus.end_dt          = DATE '9999-12-31'
+   AND cus.end_ts          = timestamp 'infinity'
   LEFT JOIN bl_3nf.ce_payment_methods pmt
     ON pmt.payment_method_name = src.payment_method_name
    AND pmt.source_system       = src.source_system
@@ -267,10 +267,20 @@ map AS (
    AND dty.source_entity      = src.source_entity
 
   -- countries/regions/cities + address
-  LEFT JOIN bl_3nf.ce_countries ctr
+
+	LEFT JOIN bl_cl.t_map_countries mapc
+      ON mapc.country_src_name = src.country_name
+     AND mapc.source_system = src.source_system
+     AND mapc.source_entity = src.source_entity
+    LEFT JOIN bl_3nf.ce_countries ctr
+      ON ctr.source_system = 'bl_cl'
+     AND ctr.source_entity = 't_map_countries'
+     AND ctr.source_id = mapc.country_id::varchar
+
+  /*LEFT JOIN bl_3nf.ce_countries ctr
     ON ctr.country_name  = src.country_name
    AND ctr.source_system = src.source_system
-   AND ctr.source_entity = src.source_entity
+   AND ctr.source_entity = src.source_entity*/
   LEFT JOIN bl_3nf.ce_regions reg
     ON reg.region_name   = src.region_name
    AND reg.country_id    = ctr.country_id
@@ -407,7 +417,7 @@ $$;
 -- =========================================================
 --  TEST QUERIES 
 -- =========================================================
-CALL bl_cl.pr_load_ce_transactions();
+CALL bl_cl.pr_load_ce_transactions(true);
 
 
 
@@ -421,7 +431,7 @@ FROM bl_3nf.ce_transactions
 GROUP BY 1,2,3
 HAVING COUNT(*) > 1;
 
-SELECT* FROM bl_3nf.ce_transactions;
+SELECT* FROM bl_3nf.ce_transactions WHERE source_entity ='src_sales_pos';
 SELECT COUNT(*) FROM bl_3nf.ce_transactions;
 
 --To verify completeness of the ETL load from the Source Area (SA) to the 3NF layer by identifying business keys (transactions) that exist in SA but are missing in the target ce_transactions table.
@@ -450,45 +460,7 @@ WHERE t.txn_id IS NULL;
 -- =========================================================
 --  FCT_SALES_DAILY
 -- =========================================================
-DROP TABLE IF EXISTS bl_dm.fct_sales_daily;
 
-CREATE TABLE IF NOT EXISTS bl_dm.fct_sales_daily (
-    date_id                   INT,
-    customer_id               BIGINT,
-    product_id                BIGINT,
-    store_id                  BIGINT,
-    employee_id               BIGINT,
-    terminal_id               BIGINT,
-    promotion_id              BIGINT,
-    delivery_provider_id      BIGINT,
-    junk_context_id           BIGINT,
-    promised_delivery_date_id INT,
-
-    txn_src_id                VARCHAR(100),
-    txn_ts_src                TIMESTAMP,
-    tracking_id_src_id        VARCHAR(100),
-
-    qty                       INT,
-    unit_price_amt            DECIMAL(12,2),
-    discount_amt              DECIMAL(12,2),
-    tax_amt                   DECIMAL(12,2),
-    shipping_fee_amt          DECIMAL(12,2),
-    sales_amt                 DECIMAL(12,2),
-    cost_amt                  DECIMAL(12,2),
-    gross_profit_amt          DECIMAL(12,2),
-    loyalty_points_earned     INT,
-    customer_rating           DECIMAL(4,1),
-    calculated_gross_margin_pct DECIMAL(5,2),
-    calculated_net_sales_amt  DECIMAL(12,2)
-)
-PARTITION BY RANGE (date_id);
-
-
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_fct_sales_daily_bk ON bl_dm.fct_sales_daily (date_id, txn_src_id);
-
-CREATE TABLE IF NOT EXISTS bl_dm.fct_sales_daily_default
-PARTITION OF bl_dm.fct_sales_daily DEFAULT;
 
 CREATE OR REPLACE PROCEDURE bl_cl.pr_manage_fct_sales_daily_partitions(p_months_back int DEFAULT 3, p_run_id uuid DEFAULT NULL)
 LANGUAGE plpgsql
@@ -561,13 +533,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
-SELECT
-  sales_channel, payment_method, card_type, receipt_type,
-  payment_gateway, order_status, shift_name, device_type_id,
-  COUNT(*) cnt
-FROM bl_dm.dim_junk_context
-GROUP BY 1,2,3,4,5,6,7,8
-HAVING COUNT(*) > 1;
+
 
 
 CREATE OR REPLACE PROCEDURE bl_cl.pr_load_fct_sales_daily_dm(p_months_back int DEFAULT 3, p_run_id uuid DEFAULT NULL)
@@ -619,14 +585,15 @@ BEGIN
     LEFT JOIN bl_3nf.ce_customers_scd c3
       ON c3.customer_id = trx.customer_id
      AND c3.is_active = true
-     AND c3.end_dt = date '9999-12-31'
+     AND c3.end_ts = timestamp 'infinity'
     LEFT JOIN bl_dm.dim_customers_scd dcus
       ON dcus.source_id = c3.customer_id::varchar
      AND dcus.is_active = true
-     AND dcus.end_dt = date '9999-12-31'
+     AND dcus.end_ts = timestamp 'infinity'
 
     LEFT JOIN bl_3nf.ce_delivery_providers dp3 ON dp3.delivery_provider_id = trx.delivery_provider_id
-    LEFT JOIN bl_dm.dim_delivery_providers ddpr ON ddpr.source_id = dp3.delivery_provider_id::varchar
+	left join bl_3nf.ce_delivery_types dt3 on dt3.delivery_type_id = trx.delivery_type_id
+    LEFT JOIN bl_dm.dim_delivery_providers ddpr ON ddpr.source_id = dp3.delivery_provider_id::varchar|| '|' || dt3.delivery_type_id::varchar
 
     -- JUNK
     LEFT JOIN bl_3nf.ce_sales_channels sch3 ON sch3.sales_channel_id = trx.sales_channel_id
@@ -739,15 +706,19 @@ BEGIN
   LEFT JOIN bl_3nf.ce_customers_scd c3
     ON c3.customer_id = trx.customer_id
    AND c3.is_active = true
-   AND c3.end_dt = date '9999-12-31'
+   AND c3.end_ts = timestamp'infinity'
   LEFT JOIN bl_dm.dim_customers_scd dcus
     ON dcus.source_id = c3.customer_id::varchar
    AND dcus.is_active = true
-   AND dcus.end_dt = date '9999-12-31'
+   AND dcus.end_ts = timestamp 'infinity'
 
-  LEFT JOIN bl_3nf.ce_delivery_providers dp3 ON dp3.delivery_provider_id = trx.delivery_provider_id
+ /* LEFT JOIN bl_3nf.ce_delivery_providers dp3 ON dp3.delivery_provider_id = trx.delivery_provider_id
   LEFT JOIN bl_dm.dim_delivery_providers ddpr
-    ON ddpr.source_id = dp3.delivery_provider_id::varchar
+    ON ddpr.source_id = dp3.delivery_provider_id::varchar*/
+
+LEFT JOIN bl_3nf.ce_delivery_providers dp3 ON dp3.delivery_provider_id = trx.delivery_provider_id
+	left join bl_3nf.ce_delivery_types dt3 on dt3.delivery_type_id = trx.delivery_type_id
+    LEFT JOIN bl_dm.dim_delivery_providers ddpr ON ddpr.source_id = dp3.delivery_provider_id::varchar|| '|' || dt3.delivery_type_id::varchar
 
   -- JUNK
   LEFT JOIN bl_3nf.ce_sales_channels sch3 ON sch3.sales_channel_id = trx.sales_channel_id

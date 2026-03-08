@@ -1931,8 +1931,8 @@ INSERT INTO bl_3nf.ce_customers_scd (
     age_grp,
     customer_segment,
     gender,
-    start_dt,
-    end_dt,
+    start_ts,
+    end_ts,
     is_active,
     source_system,
     source_entity,
@@ -1950,14 +1950,14 @@ SELECT
     'n. a.',
     'n. a.',
     'n. a.',
-    DATE '1900-01-01',
-    DATE '9999-12-31',
+    timestamp '1900-01-01 00:00:00',
+    'infinity'::timestamp,
     TRUE,
     'manual',
     'manual',
     'n. a.',
-    DATE '1900-01-01',
-    DATE '1900-01-01'
+    timestamp '1900-01-01',
+    timestamp '1900-01-01'
 WHERE NOT EXISTS (
     SELECT 1
     FROM bl_3nf.ce_customers_scd cus

@@ -159,7 +159,8 @@ CREATE TABLE IF NOT EXISTS bl_dm.dim_dates_day (
     CONSTRAINT pk_dim_dates_day PRIMARY KEY (date_id)
     );
 
--- 3.9 DIM_CUSTOMERS_SCD (SCD2)
+
+
 CREATE TABLE IF NOT EXISTS bl_dm.dim_customers_scd (
     customer_id              BIGINT DEFAULT nextval('bl_dm.seq_dim_customers_scd'),
     customer_src_id          VARCHAR(100) NOT NULL,
@@ -169,15 +170,18 @@ CREATE TABLE IF NOT EXISTS bl_dm.dim_customers_scd (
     customer_segment         VARCHAR(30)  NOT NULL,
     gender                   VARCHAR(20)  NOT NULL,
 
-    start_dt                 DATE         NOT NULL,
-    end_dt                   DATE         NOT NULL,
+    start_ts                 TIMESTAMP    NOT NULL,
+    end_ts                   TIMESTAMP    NOT NULL,
     is_active                BOOLEAN      NOT NULL,
 
     source_system            VARCHAR(30)  NOT NULL,
     source_entity            VARCHAR(60)  NOT NULL,
     source_id                VARCHAR(100) NOT NULL,
 
-    CONSTRAINT pk_dim_customers_scd PRIMARY KEY (customer_id)
+    CONSTRAINT pk_dim_customers_scd PRIMARY KEY (customer_id),
+
+  
+    CONSTRAINT uk_dim_customers_scd_src UNIQUE (source_system, source_entity, source_id)
 );
 COMMIT;
 
@@ -255,10 +259,14 @@ CREATE TABLE IF NOT EXISTS bl_dm.fct_sales_daily (
     CONSTRAINT fk_fct_sales_dd_junk_context
         FOREIGN KEY (junk_context_id)
         REFERENCES bl_dm.dim_junk_context (junk_context_id)
-);
+)
+PARTITION BY RANGE (date_id);
 COMMIT;
 
+CREATE TABLE IF NOT EXISTS bl_dm.fct_sales_daily_default
+PARTITION OF bl_dm.fct_sales_daily DEFAULT;
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_fct_sales_daily_bk ON bl_dm.fct_sales_daily (date_id, txn_src_id);
 -- 6) Indexes on fact tables are created on foreign keys and time attributes to optimize filtering and aggregations
 BEGIN;
 CREATE INDEX IF NOT EXISTS ix_fct_sales_daily_date         ON bl_dm.fct_sales_daily(date_id);

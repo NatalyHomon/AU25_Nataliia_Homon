@@ -205,7 +205,7 @@ BEGIN
     END IF;
 
     -- 4) Very long single token without spaces (>20)
-    IF position(' ' in v) = 0 AND v_len > 20 THEN
+    IF "position"(' ' in v) = 0 AND v_len > 20 THEN
         RETURN false;
     END IF;
 
@@ -1456,16 +1456,25 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 AS $$
-    SELECT
-        m.country_name::varchar(60)            AS country_name,
-        'bl_cl'::varchar(30)                   AS source_system,
-        't_map_countries'::varchar(60)         AS source_entity,
-        m.country_src_name::varchar(100)       AS source_id,
-        max(m.update_dts)::timestamptz         AS max_load_dts
+    WITH dedup AS (
+    SELECT DISTINCT ON (lower(trim(m.country_name)))
+        trim(m.country_name)                       AS country_name,
+        m.country_id                               AS country_id,
+        m.update_dts                               AS update_dts
     FROM bl_cl.t_map_countries m
     WHERE m.country_name IS NOT NULL
       AND m.update_dts > p_last_dts
-    GROUP BY 1,2,3,4;
+    ORDER BY lower(trim(m.country_name)), m.update_dts DESC, m.country_id
+)
+SELECT
+    d.country_name::varchar(60)        AS country_name,
+    'bl_cl'::varchar(30)               AS source_system,
+    't_map_countries'::varchar(60)     AS source_entity,
+    d.country_id::varchar(100)         AS source_id,
+    max(d.update_dts)::timestamptz     AS max_load_dts
+FROM dedup d
+GROUP BY d.country_name, d.country_id;
+    
 $$;
 
 CREATE OR REPLACE PROCEDURE bl_cl.pr_load_ce_countries_from_map(p_full_reload boolean DEFAULT FALSE, p_run_id uuid DEFAULT NULL)
@@ -1593,17 +1602,24 @@ AS $$
         WHERE spo.region IS NOT NULL
           AND spo.load_dts > p_last_dts_pos
     ),
-    mapped AS (
-        SELECT
-            s.region_name,
-            COALESCE(ctr.country_id, -1) AS country_id,
-            s.source_system,
-            s.source_entity,
-            s.source_id,
-            s.load_dts
-        FROM src s
-        LEFT JOIN bl_3nf.ce_countries ctr
-          ON ctr.source_id = s.country_src_name   -- ТІЛЬКИ ПО SOURCE_ID (як у твоєму DML)
+   mapped AS (
+    SELECT
+        s.region_name,
+        COALESCE(ctr.country_id, -1) AS country_id,
+        s.source_system,
+        s.source_entity,
+        s.source_id,
+        s.load_dts
+    FROM src s
+    LEFT JOIN bl_cl.t_map_countries mapc
+      ON mapc.country_src_name = s.country_src_name
+     AND mapc.source_system = s.source_system
+     AND mapc.source_entity = s.source_entity
+    LEFT JOIN bl_3nf.ce_countries ctr
+      ON ctr.source_system = 'bl_cl'
+     AND ctr.source_entity = 't_map_countries'
+     AND ctr.source_id = mapc.country_id::varchar
+
     )
     SELECT
         region_name::varchar(60),
@@ -1765,13 +1781,19 @@ AS $$
           AND spo.load_dts > p_last_dts_pos
     ),
     country_resolved AS (
-        SELECT
-            s.*,
-            COALESCE(ctr.country_id, -1) AS country_id
-        FROM src s
-        LEFT JOIN bl_3nf.ce_countries ctr
-          ON ctr.source_id = s.country_src_name  -- ТІЛЬКИ ПО SOURCE_ID
-    ),
+    SELECT
+        s.*,
+        COALESCE(ctr.country_id, -1) AS country_id
+    FROM src s
+    LEFT JOIN bl_cl.t_map_countries mapc
+      ON lower(mapc.country_src_name) = lower(s.country_src_name)
+     AND mapc.source_system = s.source_system
+     AND mapc.source_entity = s.source_entity
+    LEFT JOIN bl_3nf.ce_countries ctr
+      ON ctr.source_system = 'bl_cl'
+     AND ctr.source_entity = 't_map_countries'
+     AND ctr.source_id = mapc.country_id::varchar
+),
     region_resolved AS (
         SELECT
             cr.city_name,
@@ -1899,7 +1921,15 @@ Select * FROM bl_cl.mta_load_control
 WHERE procedure_name = 'pr_load_ce_cities_via_map';
 
 SELECT COUNT(*) FROM bl_3nf.ce_cities;
-SELECT * FROM bl_3nf.ce_cities;
+SELECT * FROM bl_3nf.ce_cities c
+JOIN bl_3nf.ce_regions r ON c.region_id = r.region_id;
+
+
+SELECT * FROM bl_3nf.ce_regions;
+
+SELECT*FROM sa_sales_online.src_sales_online sso WHERE region ='Kharkivska' AND city ='Dnipro';
+
+
 
 -- =========================================================
 --  CE_STORE_FORMATS
@@ -2049,48 +2079,61 @@ WITH src AS (
         COALESCE(spo.store_close_time, TIME '00:00:00')          AS store_close_time,
         COALESCE(NULLIF(trim(spo.city), ''), 'n. a.')            AS city_name,
         COALESCE(NULLIF(trim(spo.region), ''), 'n. a.')          AS region_name,
-        COALESCE(NULLIF(trim(spo.country), ''), 'n. a.')         AS country_name,
-        'sa_sales_pos'::text                                      AS source_system,
-        'src_sales_pos'::text                                     AS source_entity,
-        spo.load_dts                                              AS load_dts
+        COALESCE(NULLIF(trim(spo.country), ''), 'n. a.')         AS country_src_name,
+        'sa_sales_pos'::text                                     AS source_system,
+        'src_sales_pos'::text                                    AS source_entity,
+        spo.load_dts                                             AS load_dts
     FROM sa_sales_pos.src_sales_pos spo
     WHERE spo.store_id IS NOT NULL
       AND spo.load_dts > p_last_dts_pos
 ),
+country_resolved AS (
+    SELECT
+        s.*,
+        mapc.country_id AS map_country_id,
+        COALESCE(ctr.country_id, -1) AS country_id
+    FROM src s
+    LEFT JOIN bl_cl.t_map_countries mapc
+      ON lower(trim(mapc.country_src_name)) = lower(trim(s.country_src_name))
+     AND mapc.source_system = s.source_system
+     AND mapc.source_entity = s.source_entity
+    LEFT JOIN bl_3nf.ce_countries ctr
+      ON ctr.source_system = 'bl_cl'
+     AND ctr.source_entity = 't_map_countries'
+     AND ctr.source_id = mapc.country_id::varchar
+),
 map AS (
     SELECT
-        s.store_src_id,
+        cr.store_src_id,
         COALESCE(sft.store_format_id, -1) AS store_format_id,
-        s.store_open_dt,
-        s.store_open_time,
-        s.store_close_time,
-
+        cr.store_open_dt,
+        cr.store_open_time,
+        cr.store_close_time,
         COALESCE(cty.city_id, -1) AS city_id,
+        cr.source_system,
+        cr.source_entity,
+        cr.store_src_id AS source_id,
+        cr.load_dts
+    FROM country_resolved cr
 
-        s.source_system,
-        s.source_entity,
-        s.store_src_id             AS source_id,
-        s.load_dts
-    FROM src s
+    -- store format: теж краще нормалізувати
     LEFT JOIN bl_3nf.ce_store_formats sft
-      ON sft.store_format_name = s.store_format_name
-     AND sft.source_system     = s.source_system
-     AND sft.source_entity     = s.source_entity
+      ON lower(trim(sft.store_format_name)) = lower(trim(cr.store_format_name))
+     AND sft.source_system = cr.source_system
+     AND sft.source_entity = cr.source_entity
 
-    LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.source_id = s.country_name   -- ТІЛЬКИ ПО SOURCE_ID
-
+    -- regions / cities: нормалізований join
     LEFT JOIN bl_3nf.ce_regions reg
-      ON reg.region_name   = s.region_name
-     AND reg.country_id    = ctr.country_id
-     AND reg.source_system = s.source_system
-     AND reg.source_entity = s.source_entity
+      ON lower(trim(reg.region_name)) = lower(trim(cr.region_name))
+     AND reg.country_id = cr.country_id
+     AND reg.source_system = cr.source_system
+     AND reg.source_entity = cr.source_entity
 
     LEFT JOIN bl_3nf.ce_cities cty
-      ON cty.city_name     = s.city_name
-     AND cty.region_id     = reg.region_id
-     AND cty.source_system = s.source_system
-     AND cty.source_entity = s.source_entity
+      ON lower(trim(cty.city_name)) = lower(trim(cr.city_name))
+     AND cty.region_id = reg.region_id
+     AND cty.source_system = cr.source_system
+     AND cty.source_entity = cr.source_entity
 )
 SELECT DISTINCT ON (store_src_id, source_system, source_entity)
     store_src_id::varchar(100),
@@ -2195,6 +2238,7 @@ $$;
 -- =========================================================
 CALL bl_cl.pr_load_ce_stores();
 
+
 SELECT log_dts, procedure_name, status, rows_affected, message
 FROM bl_cl.mta_etl_log
 WHERE procedure_name = 'pr_load_ce_stores'
@@ -2228,9 +2272,9 @@ WITH src AS (
     SELECT DISTINCT
         COALESCE(NULLIF(trim(son.delivery_postal_code), ''), 'n. a.')   AS delivery_postal_code,
         COALESCE(NULLIF(trim(son.delivery_address_line1), ''), 'n. a.') AS delivery_address_line1,
-        COALESCE(NULLIF(trim(son.city), ''), 'n. a.')                  AS city_name,
-        COALESCE(NULLIF(trim(son.region), ''), 'n. a.')                AS region_name,
-        COALESCE(NULLIF(trim(son.country), ''), 'n. a.')               AS country_name,
+        COALESCE(NULLIF(trim(son.city), ''), 'n. a.')                   AS city_name,
+        COALESCE(NULLIF(trim(son.region), ''), 'n. a.')                 AS region_name,
+        COALESCE(NULLIF(trim(son.country), ''), 'n. a.')                AS country_src_name,
         'sa_sales_online'::text                                         AS source_system,
         'src_sales_online'::text                                        AS source_entity,
         son.load_dts                                                    AS load_dts
@@ -2238,28 +2282,40 @@ WITH src AS (
     WHERE son.delivery_postal_code IS NOT NULL
       AND son.load_dts > p_last_dts_online
 ),
-map AS (
+country_resolved AS (
     SELECT
-        s.delivery_postal_code,
-        s.delivery_address_line1,
-        COALESCE(cty.city_id, -1) AS city_id,
-        s.source_system,
-        s.source_entity,
-        s.delivery_postal_code     AS source_id,
-        s.load_dts
+        s.*,
+        COALESCE(ctr.country_id, -1) AS country_id
     FROM src s
+    LEFT JOIN bl_cl.t_map_countries mapc
+      ON lower(trim(mapc.country_src_name)) = lower(trim(s.country_src_name))
+     AND mapc.source_system = s.source_system
+     AND mapc.source_entity = s.source_entity
     LEFT JOIN bl_3nf.ce_countries ctr
-      ON ctr.source_id = s.country_name   
+      ON ctr.source_system = 'bl_cl'
+     AND ctr.source_entity = 't_map_countries'
+     AND ctr.source_id = mapc.country_id::varchar
+),
+mapped AS (
+    SELECT
+        cr.delivery_postal_code,
+        cr.delivery_address_line1,
+        COALESCE(cty.city_id, -1) AS city_id,
+        cr.source_system,
+        cr.source_entity,
+        cr.delivery_postal_code AS source_id,
+        cr.load_dts
+    FROM country_resolved cr
     LEFT JOIN bl_3nf.ce_regions reg
-      ON reg.region_name   = s.region_name
-     AND reg.country_id    = ctr.country_id
-     AND reg.source_system = s.source_system
-     AND reg.source_entity = s.source_entity
+      ON lower(trim(reg.region_name)) = lower(trim(cr.region_name))
+     AND reg.country_id = cr.country_id
+     AND reg.source_system = cr.source_system
+     AND reg.source_entity = cr.source_entity
     LEFT JOIN bl_3nf.ce_cities cty
-      ON cty.city_name     = s.city_name
-     AND cty.region_id     = reg.region_id
-     AND cty.source_system = s.source_system
-     AND cty.source_entity = s.source_entity
+      ON lower(trim(cty.city_name)) = lower(trim(cr.city_name))
+     AND cty.region_id = reg.region_id
+     AND cty.source_system = cr.source_system
+     AND cty.source_entity = cr.source_entity
 )
 SELECT
     delivery_postal_code::varchar(20),
@@ -2269,7 +2325,7 @@ SELECT
     source_entity::varchar(60),
     source_id::varchar(100),
     max(load_dts)::timestamptz AS max_load_dts
-FROM map
+FROM mapped
 GROUP BY 1,2,3,4,5,6;
 $$;
 
@@ -4008,7 +4064,7 @@ WITH src_raw AS (
         COALESCE(NULLIF(trim(spo.cashier_first_name), ''), 'n. a.')    AS first_name,
         COALESCE(NULLIF(trim(spo.cashier_last_name), ''), 'n. a.')     AS last_name,
         COALESCE(NULLIF(trim(spo.cashier_dept), ''), 'n. a.')          AS department,
-        COALESCE(NULLIF(trim(spo.cashier_position), ''), 'n. a.')      AS position,
+        COALESCE(NULLIF(trim(spo.cashier_position), ''), 'n. a.')      AS "position",
         COALESCE(spo.cashier_hire_dt, DATE '1900-01-01')               AS hire_dt,
         COALESCE(spo.txn_ts, TIMESTAMP '1900-01-01')                   AS txn_ts,
         'sa_sales_pos'::text                                           AS source_system,
@@ -4026,7 +4082,7 @@ src AS (
         srr.first_name,
         srr.last_name,
         srr.department,
-        srr.position,
+        srr."position",
         srr.hire_dt,
         srr.source_system,
         srr.source_entity,
@@ -4038,14 +4094,15 @@ src AS (
         srr.source_system,
         srr.source_entity,
         srr.txn_ts DESC,
-        srr.load_dts DESC
+        srr.load_dts DESC,
+		 srr.first_name, srr.last_name, srr.department, srr."position"
 )
 SELECT
     src.employee_src_id::varchar(100),
     src.first_name::varchar(100),
     src.last_name::varchar(100),
     src.department::varchar(60),
-    src.position::varchar(60),
+    src."position"::varchar(60),
     src.hire_dt,
     src.source_system::varchar(30),
     src.source_entity::varchar(60),
@@ -4085,7 +4142,7 @@ BEGIN
     CALL bl_cl.pr_log_write(v_proc,'START',0,'Start loading CE_EMPLOYEES.',NULL,NULL,NULL,v_run_id);
 
     INSERT INTO bl_3nf.ce_employees (
-        employee_id, employee_src_id, first_name, last_name, department, position, hire_dt,
+        employee_id, employee_src_id, first_name, last_name, department, "position", hire_dt,
         source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
     )
     SELECT
@@ -4100,7 +4157,7 @@ BEGIN
         first_name,
         last_name,
         department,
-        position,
+        "position",
         hire_dt,
         source_system,
         source_entity,
@@ -4113,7 +4170,7 @@ BEGIN
         p.first_name,
         p.last_name,
         p.department,
-        p.position,
+        p."position",
         p.hire_dt,
         p.source_system,
         p.source_entity,
@@ -4127,21 +4184,21 @@ BEGIN
         first_name   = EXCLUDED.first_name,
         last_name    = EXCLUDED.last_name,
         department   = EXCLUDED.department,
-        position     = EXCLUDED.position,
+        "position"     = EXCLUDED."position",
         hire_dt      = EXCLUDED.hire_dt,
         source_id    = EXCLUDED.source_id,
         ta_update_dt = now()
     WHERE (bl_3nf.ce_employees.first_name,
            bl_3nf.ce_employees.last_name,
            bl_3nf.ce_employees.department,
-           bl_3nf.ce_employees.position,
+           bl_3nf.ce_employees."position",
            bl_3nf.ce_employees.hire_dt,
            bl_3nf.ce_employees.source_id)
           IS DISTINCT FROM
           (EXCLUDED.first_name,
            EXCLUDED.last_name,
            EXCLUDED.department,
-           EXCLUDED.position,
+           EXCLUDED."position",
            EXCLUDED.hire_dt,
            EXCLUDED.source_id);
 
@@ -4184,7 +4241,12 @@ SELECT * FROM bl_3nf.ce_employees;
 --  ce_customers_scd
 -- =========================================================
 
-CREATE OR REPLACE PROCEDURE bl_cl.pr_load_ce_customers_scd(p_full_reload boolean DEFAULT FALSE, p_run_id uuid DEFAULT NULL)
+
+
+CREATE OR REPLACE PROCEDURE bl_cl.pr_load_ce_customers_scd(
+    p_full_reload boolean DEFAULT FALSE,
+    p_run_id uuid DEFAULT NULL
+)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -4192,53 +4254,73 @@ DECLARE
     v_run_id uuid := COALESCE(p_run_id, gen_random_uuid());
 
     v_rows_default bigint := 0;
-    v_rows_upd     bigint := 0;
     v_rows_ins     bigint := 0;
     v_rows_total   bigint := 0;
 BEGIN
-    -- 0) start log
-    CALL bl_cl.pr_log_write(v_proc,'START',0,'Start loading CE_CUSTOMERS_SCD (latest-only, no function).',NULL,NULL,NULL,v_run_id);
+    ----------------------------------------------------------------------
+    -- START LOG
+    ----------------------------------------------------------------------
+    CALL bl_cl.pr_log_write(
+        v_proc,'START',0,
+        'Start loading CE_CUSTOMERS_SCD (timestamp SCD2, no full delete).',
+        NULL,NULL,NULL,v_run_id
+    );
 
     ----------------------------------------------------------------------
-    -- 1) default row
+    -- FULL RELOAD DISABLED (FK SAFE)
+    ----------------------------------------------------------------------
+    IF p_full_reload THEN
+        CALL bl_cl.pr_log_write(
+            v_proc,'WARN',0,
+            'Full reload requested but DISABLED due to FK from ce_transactions.',
+            NULL,NULL,NULL,v_run_id
+        );
+    END IF;
+
+    ----------------------------------------------------------------------
+    -- DEFAULT ROW
     ----------------------------------------------------------------------
     INSERT INTO bl_3nf.ce_customers_scd (
-        customer_id, customer_src_id, first_name, last_name, email, phone, age_grp, customer_segment, gender,
-        start_dt, end_dt, is_active,
-        source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
+        customer_id, customer_src_id, first_name, last_name, email, phone,
+        age_grp, customer_segment, gender,
+        start_ts, end_ts, is_active,
+        source_system, source_entity, source_id,
+        ta_insert_dt, ta_update_dt
     )
     SELECT
-        -1, 'n. a.', 'n. a.', 'n. a.', 'n. a.', 'n. a.', 'n. a.', 'n. a.', 'n. a.',
-        DATE '1900-01-01', DATE '9999-12-31', TRUE,
-        'manual', 'manual', 'n. a.', timestamp '1900-01-01', timestamp '1900-01-01'
-    WHERE NOT EXISTS (SELECT 1 FROM bl_3nf.ce_customers_scd WHERE customer_id = -1);
+        -1, 'n. a.', 'n. a.', 'n. a.', 'n. a.', 'n. a.',
+        'n. a.', 'n. a.', 'n. a.',
+        TIMESTAMP '1900-01-01 00:00:00',
+        'infinity'::timestamp,
+        TRUE,
+        'manual','manual','n. a.',
+        TIMESTAMP '1900-01-01',
+        TIMESTAMP '1900-01-01'
+    WHERE NOT EXISTS (
+        SELECT 1 FROM bl_3nf.ce_customers_scd WHERE customer_id = -1
+    );
 
     GET DIAGNOSTICS v_rows_default = ROW_COUNT;
 
-    CALL bl_cl.pr_log_write(
-        v_proc,'INFO',v_rows_default,
-        format('Default row ensured. inserted=%s', v_rows_default),
-        NULL,'manual','manual',v_run_id
-    );
-
     ----------------------------------------------------------------------
-    -- 2) UPDATE step (close changed) 
+    -- BUILD HISTORY FROM SOURCES
     ----------------------------------------------------------------------
     WITH src_raw AS (
+
         /* ONLINE */
         SELECT
-            COALESCE(son.customer_src_id, 'n. a.')       AS customer_src_id,
-            COALESCE(son.customer_first_name, 'n. a.')   AS first_name,
-            COALESCE(son.customer_last_name, 'n. a.')    AS last_name,
-            COALESCE(son.customer_email, 'n. a.')        AS email,
-            COALESCE(son.customer_phone, 'n. a.')        AS phone,
-            COALESCE(son.customer_age_group, 'n. a.')    AS age_grp,
-            COALESCE(son.customer_segment, 'n. a.')      AS customer_segment,
-            COALESCE(son.gender, 'n. a.')                AS gender,
+            COALESCE(son.customer_src_id,'n. a.')       AS customer_src_id,
+            COALESCE(son.customer_first_name,'n. a.')   AS first_name,
+            COALESCE(son.customer_last_name,'n. a.')    AS last_name,
+            COALESCE(son.customer_email,'n. a.')        AS email,
+            COALESCE(son.customer_phone,'n. a.')        AS phone,
+            COALESCE(son.customer_age_group,'n. a.')    AS age_grp,
+            COALESCE(son.customer_segment,'n. a.')      AS customer_segment,
+            COALESCE(son.gender,'n. a.')                AS gender,
             COALESCE(son.txn_ts, TIMESTAMP '1900-01-01') AS txn_ts,
-            'sa_sales_online'                            AS source_system,
-            'src_sales_online'                           AS source_entity,
-            COALESCE(son.customer_src_id, 'n. a.')       AS source_id
+            'sa_sales_online'                           AS source_system,
+            'src_sales_online'                          AS source_entity,
+            COALESCE(son.customer_src_id,'n. a.')       AS source_id
         FROM sa_sales_online.src_sales_online son
         WHERE son.customer_src_id IS NOT NULL
 
@@ -4246,268 +4328,150 @@ BEGIN
 
         /* POS */
         SELECT
-            COALESCE(spo.customer_src_id, 'n. a.')       AS customer_src_id,
-            'n. a.'                                      AS first_name,
-            'n. a.'                                      AS last_name,
-            'n. a.'                                      AS email,
-            COALESCE(spo.customer_phone, 'n. a.')        AS phone,
-            COALESCE(spo.customer_age_group, 'n. a.')    AS age_grp,
-            COALESCE(spo.customer_segment, 'n. a.')      AS customer_segment,
-            'n. a.'                                      AS gender,
+            COALESCE(spo.customer_src_id,'n. a.')       AS customer_src_id,
+            'n. a.'                                     AS first_name,
+            'n. a.'                                     AS last_name,
+            'n. a.'                                     AS email,
+            COALESCE(spo.customer_phone,'n. a.')        AS phone,
+            COALESCE(spo.customer_age_group,'n. a.')    AS age_grp,
+            COALESCE(spo.customer_segment,'n. a.')      AS customer_segment,
+            'n. a.'                                     AS gender,
             COALESCE(spo.txn_ts, TIMESTAMP '1900-01-01') AS txn_ts,
-            'sa_sales_pos'                               AS source_system,
-            'src_sales_pos'                              AS source_entity,
-            COALESCE(spo.customer_src_id, 'n. a.')       AS source_id
+            'sa_sales_pos'                              AS source_system,
+            'src_sales_pos'                             AS source_entity,
+            COALESCE(spo.customer_src_id,'n. a.')       AS source_id
         FROM sa_sales_pos.src_sales_pos spo
         WHERE spo.customer_src_id IS NOT NULL
     ),
-    src AS (
-        SELECT DISTINCT ON (srr.customer_src_id, srr.source_system, srr.source_entity)
-            srr.customer_src_id,
-            srr.first_name,
-            srr.last_name,
-            srr.email,
-            srr.phone,
-            srr.age_grp,
-            srr.customer_segment,
-            srr.gender,
-            srr.source_system,
-            srr.source_entity,
-            srr.source_id
-        FROM src_raw srr
-        ORDER BY
-            srr.customer_src_id,
-            srr.source_system,
-            srr.source_entity,
-            srr.txn_ts DESC
+--md5(concat_ws('|', ...)) creates a hash from several fields so the system can quickly check whether the customer data has changed.
+    src_norm AS (
+        SELECT r.*,
+               md5(concat_ws('|',
+                   r.first_name,r.last_name,r.email,
+                   r.phone,r.age_grp,r.customer_segment,r.gender
+               )) AS state_hash
+        FROM src_raw r
     ),
-    cur AS (
-        SELECT
-            cus.customer_id,
-            cus.customer_src_id,
-            cus.first_name,
-            cus.last_name,
-            cus.email,
-            cus.phone,
-            cus.age_grp,
-            cus.customer_segment,
-            cus.gender,
-            cus.source_system,
-            cus.source_entity
-        FROM bl_3nf.ce_customers_scd cus
-        WHERE cus.is_active = TRUE
-          AND cus.end_dt = DATE '9999-12-31'
-          AND cus.customer_id <> -1
+
+    src_ordered AS (
+        SELECT s.*,
+               lag(state_hash) OVER (
+                   PARTITION BY customer_src_id, source_system, source_entity
+                   ORDER BY txn_ts, state_hash
+               ) AS prev_hash
+        FROM src_norm s
     ),
-    chg AS (
+
+    src_changes AS (
+        SELECT *
+        FROM src_ordered
+        WHERE prev_hash IS NULL
+           OR prev_hash IS DISTINCT FROM state_hash
+    ),
+
+    -- issue with same ts
+    src_ranked AS (
+        SELECT sc.*,
+               row_number() OVER (
+                   PARTITION BY customer_src_id, source_system, source_entity, txn_ts
+                   ORDER BY txn_ts, state_hash
+               ) AS rn_in_ts
+        FROM src_changes sc
+    ),
+
+    src_scd AS (
         SELECT
-            cur.customer_id
-        FROM src
-        JOIN cur
-          ON cur.customer_src_id = src.customer_src_id
-         AND cur.source_system   = src.source_system
-         AND cur.source_entity   = src.source_entity
-        WHERE cur.first_name       IS DISTINCT FROM src.first_name
-           OR cur.last_name        IS DISTINCT FROM src.last_name
-           OR cur.email            IS DISTINCT FROM src.email
-           OR cur.phone            IS DISTINCT FROM src.phone
-           OR cur.age_grp          IS DISTINCT FROM src.age_grp
-           OR cur.customer_segment IS DISTINCT FROM src.customer_segment
-           OR cur.gender           IS DISTINCT FROM src.gender
+            customer_src_id,
+            first_name, last_name, email, phone,
+            age_grp, customer_segment, gender,
+            source_system, source_entity, source_id,
+            (txn_ts + (rn_in_ts - 1) * INTERVAL '1 microsecond') AS start_ts
+        FROM src_ranked
+    ),
+
+    src_scd_final AS (
+        SELECT
+            customer_src_id,
+            first_name, last_name, email, phone,
+            age_grp, customer_segment, gender,
+            source_system, source_entity, source_id,
+            start_ts,
+            COALESCE(
+                lead(start_ts) OVER (
+                    PARTITION BY customer_src_id, source_system, source_entity
+                    ORDER BY start_ts
+                ),
+                'infinity'::timestamp
+            ) AS end_ts
+        FROM src_scd
     )
-    UPDATE bl_3nf.ce_customers_scd cus
-    SET
-        
-        end_dt       = GREATEST(cus.start_dt, CURRENT_DATE - 1),
-        is_active    = FALSE,
-        ta_update_dt = now()
-    WHERE cus.is_active = TRUE
-      AND cus.end_dt = DATE '9999-12-31'
-      AND EXISTS (SELECT 1 FROM chg WHERE chg.customer_id = cus.customer_id);
-
-    GET DIAGNOSTICS v_rows_upd = ROW_COUNT;
-
-    CALL bl_cl.pr_log_write(
-        v_proc,'INFO',v_rows_upd,
-        format('SCD2 close step done. updated=%s', v_rows_upd),
-        NULL,NULL,NULL,v_run_id
-    );
 
     ----------------------------------------------------------------------
-    -- 3) INSERT step (insert new_or_changed) 
+    -- INSERT NEW VERSIONS
     ----------------------------------------------------------------------
-    WITH src_raw AS (
-        /* ONLINE */
-        SELECT
-            COALESCE(son.customer_src_id, 'n. a.')       AS customer_src_id,
-            COALESCE(son.customer_first_name, 'n. a.')   AS first_name,
-            COALESCE(son.customer_last_name, 'n. a.')    AS last_name,
-            COALESCE(son.customer_email, 'n. a.')        AS email,
-            COALESCE(son.customer_phone, 'n. a.')        AS phone,
-            COALESCE(son.customer_age_group, 'n. a.')    AS age_grp,
-            COALESCE(son.customer_segment, 'n. a.')      AS customer_segment,
-            COALESCE(son.gender, 'n. a.')                AS gender,
-            COALESCE(son.txn_ts, TIMESTAMP '1900-01-01') AS txn_ts,
-            'sa_sales_online'                            AS source_system,
-            'src_sales_online'                           AS source_entity,
-            COALESCE(son.customer_src_id, 'n. a.')       AS source_id
-        FROM sa_sales_online.src_sales_online son
-        WHERE son.customer_src_id IS NOT NULL
-
-        UNION ALL
-
-        /* POS */
-        SELECT
-            COALESCE(spo.customer_src_id, 'n. a.')       AS customer_src_id,
-            'n. a.'                                      AS first_name,
-            'n. a.'                                      AS last_name,
-            'n. a.'                                      AS email,
-            COALESCE(spo.customer_phone, 'n. a.')        AS phone,
-            COALESCE(spo.customer_age_group, 'n. a.')    AS age_grp,
-            COALESCE(spo.customer_segment, 'n. a.')      AS customer_segment,
-            'n. a.'                                      AS gender,
-            COALESCE(spo.txn_ts, TIMESTAMP '1900-01-01') AS txn_ts,
-            'sa_sales_pos'                               AS source_system,
-            'src_sales_pos'                              AS source_entity,
-            COALESCE(spo.customer_src_id, 'n. a.')       AS source_id
-        FROM sa_sales_pos.src_sales_pos spo
-        WHERE spo.customer_src_id IS NOT NULL
-    ),
-    src AS (
-        SELECT DISTINCT ON (srr.customer_src_id, srr.source_system, srr.source_entity)
-            srr.customer_src_id,
-            srr.first_name,
-            srr.last_name,
-            srr.email,
-            srr.phone,
-            srr.age_grp,
-            srr.customer_segment,
-            srr.gender,
-            srr.source_system,
-            srr.source_entity,
-            srr.source_id
-        FROM src_raw srr
-        ORDER BY
-            srr.customer_src_id,
-            srr.source_system,
-            srr.source_entity,
-            srr.txn_ts DESC
-    ),
-    cur AS (
-        SELECT
-            cus.customer_id,
-            cus.customer_src_id,
-            cus.first_name,
-            cus.last_name,
-            cus.email,
-            cus.phone,
-            cus.age_grp,
-            cus.customer_segment,
-            cus.gender,
-            cus.source_system,
-            cus.source_entity
-        FROM bl_3nf.ce_customers_scd cus
-        WHERE cus.is_active = TRUE
-          AND cus.end_dt = DATE '9999-12-31'
-          AND cus.customer_id <> -1
-    ),
-    chg AS (
-        SELECT
-            src.customer_src_id,
-            src.first_name,
-            src.last_name,
-            src.email,
-            src.phone,
-            src.age_grp,
-            src.customer_segment,
-            src.gender,
-            src.source_system,
-            src.source_entity,
-            src.source_id
-        FROM src
-        JOIN cur
-          ON cur.customer_src_id = src.customer_src_id
-         AND cur.source_system   = src.source_system
-         AND cur.source_entity   = src.source_entity
-        WHERE cur.first_name       IS DISTINCT FROM src.first_name
-           OR cur.last_name        IS DISTINCT FROM src.last_name
-           OR cur.email            IS DISTINCT FROM src.email
-           OR cur.phone            IS DISTINCT FROM src.phone
-           OR cur.age_grp          IS DISTINCT FROM src.age_grp
-           OR cur.customer_segment IS DISTINCT FROM src.customer_segment
-           OR cur.gender           IS DISTINCT FROM src.gender
-    ),
-    new_rows AS (
-        SELECT
-            src.customer_src_id,
-            src.first_name,
-            src.last_name,
-            src.email,
-            src.phone,
-            src.age_grp,
-            src.customer_segment,
-            src.gender,
-            src.source_system,
-            src.source_entity,
-            src.source_id
-        FROM src
-        LEFT JOIN cur
-          ON cur.customer_src_id = src.customer_src_id
-         AND cur.source_system   = src.source_system
-         AND cur.source_entity   = src.source_entity
-        WHERE cur.customer_id IS NULL
-    ),
-    new_or_changed AS (
-        SELECT * FROM new_rows
-        UNION ALL
-        SELECT * FROM chg
-    )
     INSERT INTO bl_3nf.ce_customers_scd (
-        customer_src_id, first_name, last_name, email, phone, age_grp, customer_segment, gender,
-        start_dt, end_dt, is_active,
-        source_system, source_entity, source_id, ta_insert_dt, ta_update_dt
+        customer_src_id, first_name, last_name, email, phone,
+        age_grp, customer_segment, gender,
+        start_ts, end_ts, is_active,
+        source_system, source_entity, source_id,
+        ta_insert_dt, ta_update_dt
     )
     SELECT
-        nac.customer_src_id,
-        nac.first_name,
-        nac.last_name,
-        nac.email,
-        nac.phone,
-        nac.age_grp,
-        nac.customer_segment,
-        nac.gender,
-        CURRENT_DATE,
-        DATE '9999-12-31',
-        TRUE,
-        nac.source_system,
-        nac.source_entity,
-        nac.source_id,
+        s.customer_src_id,
+        s.first_name, s.last_name, s.email, s.phone,
+        s.age_grp, s.customer_segment, s.gender,
+        s.start_ts,
+        s.end_ts,
+        (s.end_ts = 'infinity'::timestamp),
+        s.source_system, s.source_entity, s.source_id,
         now(), now()
-    FROM new_or_changed nac
-    LEFT JOIN bl_3nf.ce_customers_scd cus
-      ON cus.customer_src_id = nac.customer_src_id
-     AND cus.source_system   = nac.source_system
-     AND cus.source_entity   = nac.source_entity
-     AND cus.start_dt        = CURRENT_DATE
-    WHERE cus.customer_id IS NULL;
+    FROM src_scd_final s
+    LEFT JOIN bl_3nf.ce_customers_scd t
+      ON t.customer_src_id = s.customer_src_id
+     AND t.source_system   = s.source_system
+     AND t.source_entity   = s.source_entity
+     AND t.start_ts        = s.start_ts
+    WHERE t.customer_id IS NULL;
 
     GET DIAGNOSTICS v_rows_ins = ROW_COUNT;
 
-    CALL bl_cl.pr_log_write(
-        v_proc,'INFO',v_rows_ins,
-        format('SCD2 insert step done. inserted=%s', v_rows_ins),
-        NULL,NULL,NULL,v_run_id
-    );
+    ----------------------------------------------------------------------
+    -- 🔥 RE-CALC RANGES ( 2 infinity issue)
+    ----------------------------------------------------------------------
+    WITH ord AS (
+      SELECT
+        customer_id,
+        customer_src_id,
+        source_system,
+        source_entity,
+        start_ts,
+        lead(start_ts) OVER (
+          PARTITION BY customer_src_id, source_system, source_entity
+          ORDER BY start_ts
+        ) AS next_start_ts
+      FROM bl_3nf.ce_customers_scd
+      WHERE customer_id <> -1
+    )
+    UPDATE bl_3nf.ce_customers_scd t
+    SET
+      end_ts = COALESCE(o.next_start_ts, 'infinity'::timestamp),
+      is_active = (o.next_start_ts IS NULL),
+      ta_update_dt = now()
+    FROM ord o
+    WHERE t.customer_id = o.customer_id
+      AND (
+        t.end_ts IS DISTINCT FROM COALESCE(o.next_start_ts, 'infinity'::timestamp)
+        OR t.is_active IS DISTINCT FROM (o.next_start_ts IS NULL)
+      );
 
     ----------------------------------------------------------------------
-    -- 4) final success
+    -- SUCCESS LOG
     ----------------------------------------------------------------------
-    v_rows_total := v_rows_default + v_rows_upd + v_rows_ins;
+    v_rows_total := v_rows_default + v_rows_ins;
 
     CALL bl_cl.pr_log_write(
         v_proc,'SUCCESS',v_rows_total,
-        format('CE_CUSTOMERS_SCD loaded successfully. default=%s, updated=%s, inserted=%s',
-               v_rows_default, v_rows_upd, v_rows_ins),
+        format('CE_CUSTOMERS_SCD loaded successfully. inserted=%s', v_rows_ins),
         NULL,NULL,NULL,v_run_id
     );
 
@@ -4517,10 +4481,13 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+
 -- =========================================================
 --  TEST QUERIES 
 -- =========================================================
 CALL bl_cl.pr_load_ce_customers_scd();
+
+
 
 SELECT log_dts, procedure_name, status, rows_affected, message
 FROM bl_cl.mta_etl_log
@@ -4534,8 +4501,23 @@ SELECT COUNT(*) FROM bl_3nf.ce_customers_scd;
 SELECT * FROM bl_3nf.ce_customers_scd;
 
 
-SELECT  customer_src_id, first_name, last_name, is_active, start_dt, end_dt, source_system, source_entity
+SELECT  customer_src_id, first_name, last_name, is_active, start_ts, end_ts, source_system, source_entity
 FROM bl_3nf.ce_customers_scd
-WHERE customer_src_id = 'c0857672';
+WHERE customer_src_id = 'CUST000039';
+
+SELECT
+  customer_src_id,
+  source_system,
+  source_entity,
+  COUNT(*) AS versions_cnt,
+  MIN(start_ts) AS first_start_ts,
+  MAX(start_ts) AS last_start_ts
+FROM bl_3nf.ce_customers_scd
+WHERE customer_id <> -1
+GROUP BY customer_src_id, source_system, source_entity
+HAVING COUNT(*) > 1
+ORDER BY versions_cnt DESC, last_start_ts DESC;
+
+
 
 

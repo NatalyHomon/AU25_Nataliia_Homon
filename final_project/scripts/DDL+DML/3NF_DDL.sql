@@ -926,3 +926,16 @@ COMMIT;
 
 
 
+
+CREATE INDEX IF NOT EXISTS ix_ce_customers_active
+ON bl_3nf.ce_customers_scd (customer_src_id, source_system, source_entity)
+WHERE is_active = TRUE AND end_ts = 'infinity'::timestamp;
+
+CREATE INDEX IF NOT EXISTS ix_ce_regions_norm
+ON bl_3nf.ce_regions ((lower(trim(region_name))), country_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_ce_cities_norm
+ON bl_3nf.ce_cities ((lower(trim(city_name))), region_id, source_system, source_entity);
+
+CREATE INDEX IF NOT EXISTS ix_map_countries_norm
+ON bl_cl.t_map_countries ((lower(trim(country_src_name))), source_system, source_entity, update_dts DESC);

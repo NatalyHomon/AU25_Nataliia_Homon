@@ -1,6 +1,63 @@
+select * FROM sa_sales_online.ext_sales_online eso ;
+SELECT* FROM sa_sales_pos.ext_sales_pos esp ;
+
+SELECT* FROM sa_sales_online.src_sales_online sso ;
+SELECT* FROM sa_sales_pos.src_sales_pos ssp ;
+
+-- =========================================================
+
+SELECT * FROM bl_cl.mta_etl_log;
+SELECT * FROM bl_cl.mta_load_control;
+SELECT * FROM bl_cl.t_country_aliases;
+SELECT * FROM bl_cl.t_map_countries;
+
+-- =========================================================
+
+SELECT * FROM bl_3nf.ce_brands;
+SELECT * FROM bl_3nf.ce_card_types;
+SELECT * FROM bl_3nf.ce_cities;
+SELECT * FROM bl_3nf.ce_countries;
+SELECT * FROM bl_3nf.ce_customers_scd;
+SELECT * FROM bl_3nf.ce_delivery_addresses;
+SELECT * FROM bl_3nf.ce_delivery_providers;
+SELECT * FROM bl_3nf.ce_delivery_types;
+SELECT * FROM bl_3nf.ce_device_types;
+SELECT * FROM bl_3nf.ce_employees;
+SELECT * FROM bl_3nf.ce_fulfillment_centers;
+SELECT * FROM bl_3nf.ce_order_statuses;
+SELECT * FROM bl_3nf.ce_payment_gateways;
+SELECT * FROM bl_3nf.ce_payment_methods;
+SELECT * FROM bl_3nf.ce_product_departments;
+SELECT * FROM bl_3nf.ce_product_subcategories;
+SELECT * FROM bl_3nf.ce_products;
+SELECT * FROM bl_3nf.ce_promotions;
+SELECT * FROM bl_3nf.ce_receipt_types;
+SELECT * FROM bl_3nf.ce_regions;
+SELECT * FROM bl_3nf.ce_sales_channels;
+SELECT * FROM bl_3nf.ce_shifts;
+SELECT * FROM bl_3nf.ce_store_formats;
+SELECT * FROM bl_3nf.ce_stores;
+SELECT * FROM bl_3nf.ce_suppliers;
+SELECT * FROM bl_3nf.ce_terminal_types;
+SELECT * FROM bl_3nf.ce_terminals;
+SELECT * FROM bl_3nf.ce_transactions;
+SELECT * FROM bl_3nf.ce_unit_of_measures;
+-- =========================================================
+
+SELECT * FROM bl_dm.dim_customers_scd;
+SELECT * FROM bl_dm.dim_dates_day;
+SELECT * FROM bl_dm.dim_delivery_providers;
+SELECT * FROM bl_dm.dim_employees;
+SELECT * FROM bl_dm.dim_junk_context;
+SELECT * FROM bl_dm.dim_products;
+SELECT * FROM bl_dm.dim_promotions;
+SELECT * FROM bl_dm.dim_stores;
+SELECT * FROM bl_dm.dim_terminals;
+SELECT * FROM bl_dm.fct_sales_daily;
 -- =========================================================
 --  LOGGING
 -- =========================================================
+
 
 SELECT run_id, log_id, log_dts, procedure_name, status, rows_affected, message
 FROM bl_cl.mta_etl_log
@@ -10,12 +67,15 @@ ORDER BY log_dts desc, log_id DESC;
 --  STAGING AREA schemas sa_sales_pos, sa_sales_online
 -- =========================================================
 
+
+
 --logging
 SELECT run_id, log_dts, procedure_name, status, rows_affected, message
 FROM bl_cl.mta_etl_log
 WHERE procedure_name = 'bl_cl.prc_load_sa_sales_online_src'
  or procedure_name = 'bl_cl.prc_load_sa_sales_pos_src'
 ORDER BY log_dts DESC;
+
 
 --how many rows where inserted
 SELECT 'pos' AS source, count(*)
@@ -33,6 +93,7 @@ WHERE load_dts = (
     SELECT max(load_dts)
     FROM sa_sales_online.src_sales_online
 );
+
 
 --dublicates in Staging layer
 SELECT ckout, product_sku, COUNT(*)
@@ -54,10 +115,7 @@ FROM bl_cl.mta_etl_log
 WHERE procedure_name='bl_cl.pr_load_map_countries'
 ORDER BY log_id DESC;
 
-SELECT* FROM bl_cl.t_map_countries;
 
---alias table
-SELECT * FROM bl_cl.t_country_aliases;
 
 -- =========================================================
 -- 3NF layer
@@ -92,25 +150,7 @@ ORDER BY log_id DESC;
 Select * FROM bl_cl.mta_load_control;
 
 
---how many inserted
 
-SELECT 'bl_3nf.ce_products'  AS table_name,
-       COUNT(*) FILTER (WHERE ta_insert_dt >= date_trunc('day', now())) AS inserted_today,
-       COUNT(*) FILTER (WHERE ta_update_dt >= date_trunc('day', now())) AS updated_today
-FROM bl_3nf.ce_products
-
-UNION ALL
-SELECT 'bl_3nf.ce_stores',
-       COUNT(*) FILTER (WHERE ta_insert_dt >= date_trunc('day', now())),
-       COUNT(*) FILTER (WHERE ta_update_dt >= date_trunc('day', now()))
-FROM bl_3nf.ce_stores
-
-UNION ALL
-SELECT 'bl_3nf.ce_employees',
-       COUNT(*) FILTER (WHERE ta_insert_dt >= date_trunc('day', now())),
-       COUNT(*) FILTER (WHERE ta_update_dt >= date_trunc('day', now()))
-FROM bl_3nf.ce_employees
-ORDER BY table_name;
 
 --dublicates
 SELECT product_sku_src_id, source_system, source_entity, COUNT(*) cnt
@@ -157,9 +197,10 @@ FROM bl_3nf.ce_transactions
 GROUP BY 1,2,3
 HAVING COUNT(*) > 1;
 
-SELECT* FROM bl_3nf.ce_transactions;
+SELECT* FROM bl_3nf.ce_transactions LIMIT 1000;
 SELECT COUNT(*) FROM bl_3nf.ce_transactions;
-
+SELECT count (*) from sa_sales_online.src_sales_online sso ;
+SELECT count (*) FROM sa_sales_pos.src_sales_pos ssp ;
 --To verify completeness of the ETL load from the Source Area (SA) to the 3NF layer by identifying business keys (transactions) that exist in SA but are missing in the target ce_transactions table.
 WITH sa_bk AS (
   SELECT COALESCE(web_order_id,'n. a.') AS txn_src_id,
@@ -184,18 +225,160 @@ LEFT JOIN bl_3nf.ce_transactions t
  AND t.source_entity = s.source_entity
 WHERE t.txn_id IS NULL;
 
+--check chain of joins for addres
+WITH t AS (
+  SELECT
+      txn_src_id,
+      source_system,
+      source_entity,
+      delivery_address_id,
+      txn_ts
+  FROM bl_3nf.ce_transactions
+  WHERE source_system = 'sa_sales_online'
+    AND source_entity = 'src_sales_online'
+)
+SELECT
+    count(*)                                                AS cnt_txn,
+    count(*) FILTER (WHERE t.delivery_address_id IS NULL OR t.delivery_address_id = -1) AS cnt_no_delivery_address,
+
+    count(*) FILTER (WHERE adr.delivery_address_id IS NOT NULL OR adr.delivery_address_id =-1)                          AS cnt_join_adr,
+    count(*) FILTER (WHERE cty.city_id IS NOT NULL and cty.city_id>-1)                                      AS cnt_join_city,
+    count(*) FILTER (WHERE reg.region_id IS NOT NULL AND reg.region_id >-1)                                    AS cnt_join_region,
+    count(*) FILTER (WHERE ctr.country_id IS NOT NULL AND ctr.country_id >-1)                                   AS cnt_join_country
+
+FROM t
+LEFT JOIN bl_3nf.ce_delivery_addresses adr
+  ON adr.delivery_address_id = t.delivery_address_id
+LEFT JOIN bl_3nf.ce_cities cty
+  ON cty.city_id = adr.city_id
+LEFT JOIN bl_3nf.ce_regions reg
+  ON reg.region_id = cty.region_id
+LEFT JOIN bl_3nf.ce_countries ctr
+  ON ctr.country_id = reg.country_id;
+
+
+WITH t AS (
+  SELECT
+      txn_src_id,
+      source_system,
+      source_entity,
+      store_id,
+      txn_ts
+  FROM bl_3nf.ce_transactions
+  WHERE source_system = 'sa_sales_pos'
+    AND source_entity = 'src_sales_pos'
+)
+SELECT
+    count(*) AS cnt_txn,
+
+    count(*) FILTER (WHERE t.store_id IS NULL OR t.store_id = -1) AS cnt_no_store,
+    count(*) FILTER (WHERE str.store_id IS NOT NULL)              AS cnt_join_store,  
+    count(*) FILTER (WHERE cty.city_id IS NOT NULL)               AS cnt_join_city,
+    count(*) FILTER (WHERE reg.region_id IS NOT NULL)             AS cnt_join_region,
+    count(*) FILTER (WHERE ctr.country_id IS NOT NULL)            AS cnt_join_country
+
+FROM t
+LEFT JOIN bl_3nf.ce_stores str
+  ON str.store_id = t.store_id
+LEFT JOIN bl_3nf.ce_cities cty
+  ON cty.city_id = str.city_id
+LEFT JOIN bl_3nf.ce_regions reg
+  ON reg.region_id = cty.region_id
+LEFT JOIN bl_3nf.ce_countries ctr
+  ON ctr.country_id = reg.country_id;
+ 
+--addresschain to src pos
+
+SELECT * FROM sa_sales_pos.src_sales_pos ssp WHERE ssp.country = 'Ukraine' ;
+SELECT
+      tr.txn_src_id,      
+      str.store_src_id,
+      cty.city_name,
+      reg.region_name,
+      ctr.country_name,
+      tmc.country_src_name,
+      ssp.country      
+FROM bl_3nf.ce_transactions tr 
+LEFT JOIN sa_sales_pos.src_sales_pos ssp 
+   ON ssp.ckout  = tr.txn_src_id
+LEFT JOIN bl_3nf.ce_stores str
+  ON str.store_id = tr.store_id
+LEFT JOIN bl_3nf.ce_cities cty
+  ON cty.city_id = str.city_id
+LEFT JOIN bl_3nf.ce_regions reg
+  ON reg.region_id = cty.region_id
+LEFT JOIN bl_3nf.ce_countries ctr
+  ON ctr.country_id = reg.country_id
+ LEFT JOIN bl_cl.t_map_countries tmc 
+  ON tmc.country_id ::varchar = ctr.source_id 
+  AND tmc.country_src_name = ssp.country
+  AND tr.source_system  = tmc.source_system 
+WHERE tr.txn_src_id = 'pos_000000287';
+
+SELECT * FROM sa_sales_pos.src_sales_pos ssp WHERE ssp.country = 'Ukr' ;
+
+--address chain to src online
+SELECT*from sa_sales_online.src_sales_online sso WHERE sso.country = 'Ukraine' ;
+
+SELECT
+      tr.txn_src_id,      
+      adr.delivery_postal_code, 
+      adr.delivery_address_line1,
+      cty.city_name,
+      reg.region_name,
+      ctr.country_name,
+      tmc.country_src_name,
+      ssp.country,
+      ssp.delivery_address_line1,
+      ssp.delivery_postal_code
+FROM bl_3nf.ce_transactions tr 
+LEFT JOIN sa_sales_online.src_sales_online ssp 
+   ON ssp.web_order_id  = tr.txn_src_id
+LEFT JOIN bl_3nf.ce_delivery_addresses adr
+  ON adr.delivery_address_id = tr.delivery_address_id
+LEFT JOIN bl_3nf.ce_cities cty
+  ON cty.city_id = adr.city_id
+LEFT JOIN bl_3nf.ce_regions reg
+  ON reg.region_id = cty.region_id
+LEFT JOIN bl_3nf.ce_countries ctr
+  ON ctr.country_id = reg.country_id
+ LEFT JOIN bl_cl.t_map_countries tmc 
+  ON tmc.country_id ::varchar = ctr.source_id 
+  AND tmc.country_src_name = ssp.country 
+  AND tr.source_system  = tmc.source_system 
+WHERE tr.txn_src_id = 'onl_000000273';
+
+
 -- =========================================================
 -- CE_CUSTOMERS_SCD
 -- =========================================================
 CALL bl_cl.pr_load_ce_customers_scd();
+
+SELECT  *
+FROM bl_3nf.ce_customers_scd
+WHERE customer_src_id = 'c0857672';
+
+SELECT
+  customer_src_id,
+  source_system,
+  source_entity,
+  COUNT(*) AS versions_cnt,
+  MIN(start_ts) AS first_start_ts,
+  MAX(start_ts) AS last_start_ts
+FROM bl_3nf.ce_customers_scd
+WHERE customer_id <> -1
+GROUP BY customer_src_id, source_system, source_entity
+HAVING COUNT(*) > 1
+ORDER BY versions_cnt DESC, last_start_ts DESC;
+
+
+
 
 SELECT run_id, log_dts, procedure_name, status, rows_affected, message
 FROM bl_cl.mta_etl_log
 WHERE procedure_name = 'pr_load_ce_customers_scd'
 ORDER BY log_dts DESC;
 
-SELECT * FROM bl_cl.mta_load_control
-WHERE procedure_name = 'pr_load_ce_customers_scd';
 
 SELECT COUNT(*) FROM bl_3nf.ce_customers_scd;
 SELECT * FROM bl_3nf.ce_customers_scd;
@@ -213,7 +396,7 @@ FROM bl_3nf.ce_customers_scd;
 SELECT customer_src_id, source_system, source_entity, COUNT(*) AS active_cnt
 FROM bl_3nf.ce_customers_scd
 WHERE is_active = TRUE
-  AND end_dt = DATE '9999-12-31'
+  AND end_ts = 'infinity'::timestamp
   AND customer_id <> -1
 GROUP BY 1,2,3
 HAVING COUNT(*) <> 1;
@@ -224,47 +407,10 @@ SELECT COUNT(*) AS bad_rows
 FROM bl_3nf.ce_customers_scd
 WHERE customer_id <> -1
   AND (
-    (is_active = TRUE  AND end_dt <> DATE '9999-12-31')
+    (is_active = TRUE  AND end_ts <> 'infinity'::timestamp)
     OR
-    (is_active = FALSE AND end_dt =  DATE '9999-12-31')
+    (is_active = FALSE AND end_ts =  'infinity'::timestamp)
   );
-
---“Closing” today: each closed row must have a new active version (must be 0)
-WITH closed_today AS (
-  SELECT customer_src_id, source_system, source_entity
-  FROM bl_3nf.ce_customers_scd
-  WHERE customer_id <> -1
-    AND is_active = FALSE
-    AND end_dt = CURRENT_DATE - 1
-    AND ta_update_dt >= date_trunc('day', now())
-)
-SELECT c.*
-FROM closed_today c
-LEFT JOIN bl_3nf.ce_customers_scd a
-  ON a.customer_src_id = c.customer_src_id
- AND a.source_system   = c.source_system
- AND a.source_entity   = c.source_entity
- AND a.is_active       = TRUE
- AND a.end_dt          = DATE '9999-12-31'
-WHERE a.customer_id IS NULL;
-
---How many active users have been inserted today after the second run. If the data did not change between the first and second runs, then this count should not increase after the second run.
-SELECT COUNT(*) AS active_inserted_today
-FROM bl_3nf.ce_customers_scd
-WHERE customer_id <> -1
-  AND is_active = TRUE
-  AND end_dt = DATE '9999-12-31'
-  AND ta_insert_dt >= date_trunc('day', now());
-
-SELECT cus.customer_src_id, cus.email, cus.phone, cus.start_dt, cus.end_dt, cus.is_active, cus.source_system, cus.source_entity, cus.source_id
-FROM bl_3nf.ce_customers_scd cus
-WHERE cus.customer_src_id IN(
-SELECT cus.customer_src_id
-FROM bl_3nf.ce_customers_scd cus
-GROUP BY cus.customer_src_id
-HAVING count(cus.customer_src_id) >=3)
-ORDER BY cus.customer_src_id;
-
 
 
 -- =========================================================
@@ -391,16 +537,42 @@ ORDER BY log_dts DESC;
 
 SELECT* FROM bl_dm.dim_customers_scd;
 
-SELECT cus.customer_src_id, cus.email, cus.phone, cus.start_dt, cus.end_dt, cus.is_active, cus.source_system, cus.source_entity, cus.source_id
-FROM bl_dm.dim_customers_scd cus
-WHERE cus.customer_src_id IN(
-SELECT cus.customer_src_id
-FROM bl_dm.dim_customers_scd cus
-GROUP BY cus.customer_src_id
-HAVING count(cus.customer_src_id) >=3)
-ORDER BY cus.customer_src_id;
+SELECT  *
+FROM bl_dm.dim_customers_scd
+WHERE customer_src_id = 'c0857672';
+
+SELECT
+  customer_src_id,
+  source_system,
+  source_entity,
+  COUNT(*) AS versions_cnt,
+  MIN(start_ts) AS first_start_ts,
+  MAX(start_ts) AS last_start_ts
+FROM bl_dm.dim_customers_scd
+WHERE customer_id <> -1
+GROUP BY customer_src_id, source_system, source_entity
+HAVING COUNT(*) > 1
+ORDER BY versions_cnt DESC, last_start_ts DESC;
+
+--one active row per customer_src_id, source_system, source_entity --should be 0
+SELECT customer_src_id, source_system, source_entity, COUNT(*) AS active_cnt
+FROM bl_dm.dim_customers_scd
+WHERE is_active = TRUE
+  AND end_ts = 'infinity'::timestamp
+  AND customer_id <> -1
+GROUP BY 1,2,3
+HAVING COUNT(*) <> 1;
 
 
+--Consistency active/end_dt (must be 0 violations)
+SELECT COUNT(*) AS bad_rows
+FROM bl_dm.dim_customers_scd
+WHERE customer_id <> -1
+  AND (
+    (is_active = TRUE  AND end_ts <> 'infinity'::timestamp)
+    OR
+    (is_active = FALSE AND end_ts =  'infinity'::timestamp)
+  );
 -- =========================================================
 -- FCT TABLE
 -- =========================================================
