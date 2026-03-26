@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EC2 instance for training (Nataliia) with IMDSv2 and S3 access
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-096a4fdbcf530d8e0
+      KeyName: EC2_Postgres_Server_Keys_nataliia
+      SubnetId: subnet-0c4defb5391cbdf01
+      SecurityGroupIds:
+        - sg-0fbf42a5fb4bc1004
+        - sg-0c9e0944abff93553
+      IamInstanceProfile: AWS_EC2_full_access_S3
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            DeleteOnTermination: true
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      Tags:
+        - Key: Name
+          Value: ec2-cfn-nataliia
