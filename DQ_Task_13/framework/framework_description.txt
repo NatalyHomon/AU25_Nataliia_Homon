@@ -1,0 +1,7 @@
+The test framework is organized as a PyTest-based automation framework with Selenium support for UI testing. The project structure is decomposed into separate folders for configuration files, page objects, locators, drivers, and tests.
+
+The config folder contains YAML configuration files for test data and database settings. The locators folder contains locator classes for UI elements. The pages folder contains Page Object classes with reusable methods for interacting with application pages. The tests folder is divided into unit, integration, and ui test suites.
+
+Unit tests are stored in tests/units, integration tests are stored in tests/integration, and Selenium-based UI tests are stored in tests/ui. The Power BI UI checks are implemented using the Page Object Model. The framework also includes a shared conftest.py file for common fixtures and a pytest.ini file for PyTest configuration and markers.
+
+All tests can be executed with PyTest and reported through Allure. The Allure report provides a consolidated view of unit, integration, and UI test execution results.
