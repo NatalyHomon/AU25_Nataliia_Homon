@@ -1,0 +1,25 @@
+smoke_tests:
+  - name: Check number of tables in lnd layer
+    sql: SELECT count(table_name) FROM information_schema.tables WHERE table_schema = 'lnd'
+    expected: 9
+
+  - name: Check number of tables in dwh layer
+    sql: SELECT count(table_name) FROM information_schema.tables WHERE table_schema = 'dwh'
+    expected: 5
+
+  - name: Check number of tables in dm layer
+    sql: SELECT count(table_name) FROM information_schema.tables WHERE table_schema = 'dm'
+    expected: 1
+
+critical_tests:
+  - name: Check SCD 2 logic valid_to >= valid_from
+    sql: SELECT count(*) FROM dwh.dwh_clients WHERE valid_to <= valid_from
+    expected: 0
+
+  - name: Client table is not empty
+    sql: SELECT COUNT(*) FROM dwh.dwh_clients
+    expected_min: 1
+
+  - name: Products table is not empty
+    sql: SELECT COUNT(*) FROM dwh.dwh_products
+    expected_min: 1

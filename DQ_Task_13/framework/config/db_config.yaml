@@ -1,0 +1,8 @@
+db_type: postgres
+
+postgres:
+  database: dwh_hw_db
+  user: postgres
+  password: 536883
+  host: localhost
+  port: 5432
