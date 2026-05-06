@@ -3,45 +3,45 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 import time
 
 
 driver = webdriver.Chrome()
 
-# implicit wait
-driver.implicitly_wait(10)
-
-
-driver.get("https://www.google.com")
-
-
 try:
-    accept_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Accept')]")
-    accept_btn.click()
-except:
-    pass
+    # implicit wait
+    driver.implicitly_wait(10)
 
-# 2. Show "Selenium"
-search_box = driver.find_element(By.NAME, "q")
-search_box.send_keys("Selenium")
-search_box.send_keys(Keys.RETURN)
+    driver.get("https://www.google.com")
 
-#  explicit wait
-wait = WebDriverWait(driver, 15)
+    try:
+        accept_btn = driver.find_element(
+            By.XPATH,
+            "//button[contains(text(),'Accept')]"
+        )
+        accept_btn.click()
 
-first_result = wait.until(
-    EC.element_to_be_clickable((By.XPATH, "(//div[@id='search']//a[.//h3])[1]"))
-)
+    except NoSuchElementException:
+        print("Accept cookies button was not found.")
 
-first_result.click()
+    search_box = driver.find_element(By.NAME, "q")
+    search_box.send_keys("Selenium")
+    search_box.send_keys(Keys.RETURN)
 
-# Open first result
-first_result.click()
+    wait = WebDriverWait(driver, 15)
 
+    first_result = wait.until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "(//div[@id='search']//a[.//h3])[1]")
+        )
+    )
 
-time.sleep(5)
+    first_result.click()
 
+    time.sleep(5)
 
-driver.save_screenshot("google_result.png")
+    driver.save_screenshot("google_result.png")
 
-driver.quit()
+finally:
+    driver.quit()
